@@ -1,6 +1,6 @@
 # AI Agent Handoff For Clock HA Orchestrator
 
-Updated: 2026-06-17
+Updated: 2026-06-18
 
 Give this file to future AI agents before asking them to work on Clock PMS+,
 Home Assistant, MQTT, hotel automation, database persistence, Docker, or
@@ -123,13 +123,23 @@ slice:
 11. MQTT topic contract and serialization helpers.
 12. Home Assistant MQTT Discovery config generation.
 13. Home Assistant dashboard generator from room inventory YAML.
-14. Transactional outbox publisher helper.
-15. FastAPI shell endpoints.
-16. Dockerfile and Docker Compose.
-17. Example Mosquitto, Home Assistant, policy and room registry config.
-18. Documentation under `docs/`.
-19. GitHub Actions CI.
-20. Unit tests.
+14. DB-backed Clock sync application service for normalized booking upsert,
+    physical-room assignment history, affected-room state recalculation and
+    transactional MQTT outbox event creation.
+15. FastAPI lifespan runtime shell with DB/migration readiness checks, fixture
+    Clock sync entrypoint, policy tick entrypoint, optional MQTT lifecycle,
+    Discovery publishing, system-state publishing and outbox worker loop.
+16. Transactional outbox publisher and DB claim/retry/dead-letter helpers.
+17. DB-backed FastAPI endpoints for sync status, reconciliation, rooms,
+    bookings and audit rows.
+18. Field-specific Home Assistant command discovery topics, DB-backed command
+    consumer, retained `control/state` publication, natural manual override
+    expiry/return-to-automatic handling, booking-bound `until_checkout`
+    overrides and valid Sections dashboard generation.
+19. Dockerfile, Docker Compose and hardened Mosquitto examples.
+20. Documentation under `docs/`.
+21. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
+22. Unit tests.
 
 ## Important Files
 
@@ -152,28 +162,33 @@ homeassistant/configuration.example.yaml
 homeassistant/dashboards/hotel-reception.yaml
 app/settings.py
 app/main.py
+app/runtime.py
 app/api/routes.py
 app/clock/interface.py
 app/clock/rest.py
 app/clock/normalizer.py
 app/clock/sync.py
+app/clock/db_sync.py
 app/domain/models.py
 app/domain/enums.py
 app/domain/state_machine.py
 app/policy/engine.py
 app/policy/commands.py
+app/policy/control.py
 app/mqtt/topics.py
+app/mqtt/client.py
 app/mqtt/discovery.py
 app/outbox/service.py
 app/persistence/models.py
-migrations/versions/20260617_0001_initial.py
+app/system/state.py
+migrations/versions/
 tools/generate_dashboard.py
 tests/
 ```
 
 ## Current Validation State
 
-Validation last run successfully on 2026-06-17 from:
+Validation last run successfully on 2026-06-18 from:
 
 ```text
 C:\Users\zerko\Documents\GIT\clock-ha-orchestrator
@@ -184,19 +199,23 @@ Commands:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
 ```
 
-Result:
+Result after the `until_checkout` booking-boundary fix on
+`codex/add-db-sync-outbox`:
 
 ```text
-pytest: 23 passed
+pytest: 48 passed
 ruff: All checks passed
-mypy: Success, no issues found in 30 source files
+ruff format --check: all files already formatted
+mypy: Success, no issues found in 36 source files
+alembic heads: 20260618_0004 (head)
 ```
 
-Docker was not run during the initial scaffold because Docker was not available
-in the shell PATH.
+Docker was not run locally because Docker is not available in the shell PATH.
+CI now includes `docker build .`.
 
 ## Git And Publishing State
 
@@ -294,7 +313,13 @@ hotel/v1/system/clock-ha-orchestrator/availability
 hotel/v1/system/clock-ha-orchestrator/state
 hotel/v1/rooms/{room_key}/pms/state
 hotel/v1/rooms/{room_key}/intent/state
-hotel/v1/rooms/{room_key}/control/set
+hotel/v1/rooms/{room_key}/control/state
+hotel/v1/rooms/{room_key}/control/mode/set
+hotel/v1/rooms/{room_key}/control/hvac-mode/set
+hotel/v1/rooms/{room_key}/control/temperature/set
+hotel/v1/rooms/{room_key}/control/duration/set
+hotel/v1/rooms/{room_key}/control/water-heater/set
+hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 hotel/v1/rooms/{room_key}/reported/state
 ```
 
@@ -337,38 +362,32 @@ Important invariants:
 2. Clock physical room ID is unique per property.
 3. A booking has no more than one current physical room assignment.
 4. UTC is used internally.
-5. Hotel policy is evaluated in Europe/Sofia.
+5. Hotel policy and "today" counters are evaluated in Europe/Sofia.
 6. Semantic duplicate updates should not create duplicate domain events.
 7. Overlapping active bookings assigned to one physical room generate a conflict.
+8. `until_checkout` manual overrides are bound to the booking row and exact
+   checkout boundary captured when the command is accepted; they must not carry
+   over to the next occupant of the same room.
 
 ## Current Gaps And Next Useful Slice
 
-The most useful next production slice is DB-backed synchronization and outbox
-creation:
+The most useful next production slice is adding real PostgreSQL/Docker
+verification and hardening the remaining runtime operations:
 
-1. Implement repository/service layer for upserting normalized bookings.
-2. Persist sync runs and sync cursors.
-3. Do not advance cursor after partial failure.
-4. Detect physical-room assignment changes.
-5. Detect newly assigned rooms, assignment removal and room moves.
-6. Recalculate both old and new rooms during a move.
-7. Detect overlapping active bookings in a room.
-8. Persist room-state changes.
-9. Create outbox events inside the same DB transaction.
-10. Add integration tests around PostgreSQL transaction rollback and idempotency.
+1. Add real PostgreSQL integration tests around migration application,
+   transaction rollback, concurrent sync attempts and concurrent outbox claims.
+2. Add sanitized Clock sandbox fixtures and contract tests once physical-room
+   fields, filters and pagination are confirmed.
 
 Other important next work:
 
-1. Wire API routes to persistence instead of shell responses.
-2. Implement actual MQTT client lifecycle, reconnect/backoff, LWT and HA
-   birth-topic discovery republish.
-3. Add DB-backed Home Assistant aggregate system state.
-4. Add authentication/network restrictions for administrative endpoints.
-5. Harden Mosquitto config. It currently allows anonymous access for local
-   development only.
-6. Run Docker Compose once Docker is available.
-7. Add sanitized Clock sandbox fixtures and contract tests.
-8. Expand end-to-end tests for unassigned booking -> assigned room ->
+1. Add HA birth-topic discovery republish and stale discovery cleanup for
+   permanently removed rooms.
+2. Add a documented/authenticated dead-letter retry endpoint or management
+   command.
+3. Run Docker Compose once Docker is available and real Mosquitto password/ACL
+   files have been generated.
+4. Expand end-to-end tests for unassigned booking -> assigned room ->
    pre-arrival -> check-in -> manual override -> room move -> checkout.
 
 ## Commands For Future Agents
@@ -379,6 +398,7 @@ Local verification:
 cd C:\Users\zerko\Documents\GIT\clock-ha-orchestrator
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
 ```
 
@@ -398,6 +418,8 @@ Docker, when available:
 
 ```powershell
 copy .env.example .env
+# edit .env secrets, then generate mosquitto/config/passwords and
+# mosquitto/config/acl from the examples before starting Mosquitto
 docker compose up --build
 ```
 

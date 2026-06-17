@@ -34,4 +34,3 @@ def _load_json_list(path: Path) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         raise ValueError(f"fixture must contain a JSON list: {path}")
     return payload
-

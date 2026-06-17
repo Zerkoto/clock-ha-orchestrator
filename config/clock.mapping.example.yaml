@@ -1,0 +1,7 @@
+booking_id: id
+status: status
+arrival_date: arrival
+departure_date: departure
+updated_at: updated_at
+physical_room_id: physical_room_id
+physical_room_number: physical_room_number

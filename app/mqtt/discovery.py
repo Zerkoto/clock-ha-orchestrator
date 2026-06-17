@@ -24,8 +24,13 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
     device = room_device(room)
     state_topic = topics.room_pms_state(room.key)
     intent_topic = topics.room_intent_state(room.key)
-    command_topic = topics.room_control_set(room.key)
+    control_state_topic = topics.room_control_state(room.key)
     base = f"room_{room.key}"
+    availability = {
+        "availability_topic": topics.availability,
+        "payload_available": "online",
+        "payload_not_available": "offline",
+    }
 
     sensors = {
         "pms_status": ("PMS Status", state_topic, "{{ value_json.booking_status }}"),
@@ -46,14 +51,18 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
     }
     for suffix, (name, topic, template) in sensors.items():
         object_id = f"{base}_{suffix}"
-        yield discovery_topic("sensor", object_id), {
-            "name": name,
-            "object_id": object_id,
-            "unique_id": f"clock_{object_id}",
-            "state_topic": topic,
-            "value_template": template,
-            "device": device,
-        }
+        yield (
+            discovery_topic("sensor", object_id),
+            {
+                "name": name,
+                "object_id": object_id,
+                "unique_id": f"clock_{object_id}",
+                "state_topic": topic,
+                "value_template": template,
+                "device": device,
+                **availability,
+            },
+        )
 
     binary_sensors = {
         "reservation_active": "{{ value_json.booking_status in ['expected', 'checked_in'] }}",
@@ -61,63 +70,107 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
     }
     for suffix, template in binary_sensors.items():
         object_id = f"{base}_{suffix}"
-        yield discovery_topic("binary_sensor", object_id), {
-            "name": suffix.replace("_", " ").title(),
-            "object_id": object_id,
-            "unique_id": f"clock_{object_id}",
-            "state_topic": state_topic,
-            "value_template": template,
-            "payload_on": "True",
-            "payload_off": "False",
-            "device": device,
-        }
+        yield (
+            discovery_topic("binary_sensor", object_id),
+            {
+                "name": suffix.replace("_", " ").title(),
+                "object_id": object_id,
+                "unique_id": f"clock_{object_id}",
+                "state_topic": state_topic,
+                "value_template": template,
+                "payload_on": "True",
+                "payload_off": "False",
+                "device": device,
+                **availability,
+            },
+        )
 
-    yield discovery_topic("select", f"{base}_control_mode"), {
-        "name": "Control Mode",
-        "object_id": f"{base}_control_mode",
-        "unique_id": f"clock_{base}_control_mode",
-        "state_topic": intent_topic,
-        "value_template": "{{ value_json.control_mode }}",
-        "command_topic": command_topic,
-        "options": ["automatic", "manual", "off"],
-        "device": device,
-    }
-    yield discovery_topic("select", f"{base}_manual_hvac_mode"), {
-        "name": "Manual HVAC Mode",
-        "object_id": f"{base}_manual_hvac_mode",
-        "unique_id": f"clock_{base}_manual_hvac_mode",
-        "command_topic": command_topic,
-        "options": ["off", "heat", "cool", "auto"],
-        "device": device,
-    }
-    yield discovery_topic("number", f"{base}_manual_temperature"), {
-        "name": "Manual Temperature",
-        "object_id": f"{base}_manual_temperature",
-        "unique_id": f"clock_{base}_manual_temperature",
-        "command_topic": command_topic,
-        "min": 16,
-        "max": 28,
-        "step": 0.5,
-        "unit_of_measurement": "°C",
-        "device": device,
-    }
-    yield discovery_topic("select", f"{base}_override_duration"), {
-        "name": "Override Duration",
-        "object_id": f"{base}_override_duration",
-        "unique_id": f"clock_{base}_override_duration",
-        "command_topic": command_topic,
-        "options": ["60", "240", "720", "until_checkout"],
-        "device": device,
-    }
-    yield discovery_topic("switch", f"{base}_manual_water_heater"), {
-        "name": "Manual Water Heater",
-        "object_id": f"{base}_manual_water_heater",
-        "unique_id": f"clock_{base}_manual_water_heater",
-        "command_topic": command_topic,
-        "payload_on": "on",
-        "payload_off": "off",
-        "device": device,
-    }
+    yield (
+        discovery_topic("select", f"{base}_control_mode"),
+        {
+            "name": "Control Mode",
+            "object_id": f"{base}_control_mode",
+            "unique_id": f"clock_{base}_control_mode",
+            "state_topic": control_state_topic,
+            "value_template": "{{ value_json.control_mode }}",
+            "command_topic": topics.room_control_mode_set(room.key),
+            "options": ["automatic", "manual", "off"],
+            "device": device,
+            **availability,
+        },
+    )
+    yield (
+        discovery_topic("select", f"{base}_manual_hvac_mode"),
+        {
+            "name": "Manual HVAC Mode",
+            "object_id": f"{base}_manual_hvac_mode",
+            "unique_id": f"clock_{base}_manual_hvac_mode",
+            "state_topic": control_state_topic,
+            "value_template": "{{ value_json.manual_hvac_mode }}",
+            "command_topic": topics.room_control_hvac_mode_set(room.key),
+            "options": ["off", "heat", "cool", "auto"],
+            "device": device,
+            **availability,
+        },
+    )
+    yield (
+        discovery_topic("number", f"{base}_manual_temperature"),
+        {
+            "name": "Manual Temperature",
+            "object_id": f"{base}_manual_temperature",
+            "unique_id": f"clock_{base}_manual_temperature",
+            "state_topic": control_state_topic,
+            "value_template": "{{ value_json.manual_target_temperature_c }}",
+            "command_topic": topics.room_control_temperature_set(room.key),
+            "min": 16,
+            "max": 28,
+            "step": 0.5,
+            "unit_of_measurement": "°C",
+            "device": device,
+            **availability,
+        },
+    )
+    yield (
+        discovery_topic("select", f"{base}_override_duration"),
+        {
+            "name": "Override Duration",
+            "object_id": f"{base}_override_duration",
+            "unique_id": f"clock_{base}_override_duration",
+            "state_topic": control_state_topic,
+            "value_template": "{{ value_json.override_duration }}",
+            "command_topic": topics.room_control_duration_set(room.key),
+            "options": ["60", "240", "720", "until_checkout"],
+            "device": device,
+            **availability,
+        },
+    )
+    yield (
+        discovery_topic("switch", f"{base}_manual_water_heater"),
+        {
+            "name": "Manual Water Heater",
+            "object_id": f"{base}_manual_water_heater",
+            "unique_id": f"clock_{base}_manual_water_heater",
+            "state_topic": control_state_topic,
+            "value_template": "{{ 'on' if value_json.manual_water_heater_enabled else 'off' }}",
+            "command_topic": topics.room_control_water_heater_set(room.key),
+            "payload_on": "on",
+            "payload_off": "off",
+            "device": device,
+            **availability,
+        },
+    )
+    yield (
+        discovery_topic("button", f"{base}_return_to_automatic"),
+        {
+            "name": "Return To Automatic",
+            "object_id": f"{base}_return_to_automatic",
+            "unique_id": f"clock_{base}_return_to_automatic",
+            "command_topic": topics.room_control_return_to_automatic_set(room.key),
+            "payload_press": "return",
+            "device": device,
+            **availability,
+        },
+    )
 
 
 def system_discovery_configs(topics: MqttTopics) -> Iterable[tuple[str, dict[str, Any]]]:
@@ -127,6 +180,7 @@ def system_discovery_configs(topics: MqttTopics) -> Iterable[tuple[str, dict[str
         "manufacturer": "Clock PMS+ / Home Assistant Orchestrator",
     }
     sensors = {
+        "clock_orchestrator_status": ("Orchestrator Status", "{{ value_json.status }}"),
         "clock_last_successful_sync": ("Last Successful Sync", "{{ value_json.last_success_at }}"),
         "clock_sync_lag": ("Clock Sync Lag", "{{ value_json.lag_seconds }}"),
         "hotel_checked_in_rooms": ("Checked In Rooms", "{{ value_json.checked_in_rooms }}"),
@@ -138,22 +192,82 @@ def system_discovery_configs(topics: MqttTopics) -> Iterable[tuple[str, dict[str
             "{{ value_json.unassigned_arrivals }}",
         ),
         "hotel_room_conflicts": ("Room Conflicts", "{{ value_json.room_conflicts }}"),
+        "hotel_active_manual_overrides": (
+            "Active Manual Overrides",
+            "{{ value_json.active_manual_overrides }}",
+        ),
+        "hotel_rooms_needing_attention": (
+            "Rooms Needing Attention",
+            "{{ value_json.rooms_needing_attention }}",
+        ),
+        "clock_pending_outbox": ("Pending Outbox", "{{ value_json.pending_outbox }}"),
+        "clock_dead_letter_outbox": ("Dead Letter Outbox", "{{ value_json.dead_letter_outbox }}"),
     }
-    yield discovery_topic("binary_sensor", "clock_ha_orchestrator_online"), {
-        "name": "Clock HA Orchestrator Online",
-        "object_id": "clock_ha_orchestrator_online",
-        "unique_id": "clock_ha_orchestrator_online",
-        "state_topic": topics.availability,
-        "payload_on": "online",
-        "payload_off": "offline",
-        "device": device,
+    binary_sensors = {
+        "clock_ha_orchestrator_online": (
+            "Clock HA Orchestrator Online",
+            topics.availability,
+            None,
+            "online",
+            "offline",
+        ),
+        "clock_runtime_ready": (
+            "Clock Runtime Ready",
+            topics.system_state,
+            "{{ value_json.runtime_ready }}",
+            "True",
+            "False",
+        ),
+        "clock_mqtt_connected": (
+            "Clock MQTT Connected",
+            topics.system_state,
+            "{{ value_json.mqtt_connected }}",
+            "True",
+            "False",
+        ),
+        "clock_policy_scheduler_enabled": (
+            "Policy Scheduler Enabled",
+            topics.system_state,
+            "{{ value_json.policy_scheduler_enabled }}",
+            "True",
+            "False",
+        ),
+        "clock_outbox_worker_enabled": (
+            "Outbox Worker Enabled",
+            topics.system_state,
+            "{{ value_json.outbox_worker_enabled }}",
+            "True",
+            "False",
+        ),
     }
-    for object_id, (name, template) in sensors.items():
-        yield discovery_topic("sensor", object_id), {
+    for object_id, (name, state_topic, template, payload_on, payload_off) in binary_sensors.items():
+        payload = {
             "name": name,
             "object_id": object_id,
-            "unique_id": f"clock_{object_id}",
-            "state_topic": topics.system_state,
-            "value_template": template,
+            "unique_id": object_id,
+            "state_topic": state_topic,
+            "payload_on": payload_on,
+            "payload_off": payload_off,
             "device": device,
         }
+        if template is not None:
+            payload["value_template"] = template
+            payload["availability_topic"] = topics.availability
+            payload["payload_available"] = "online"
+            payload["payload_not_available"] = "offline"
+        yield (discovery_topic("binary_sensor", object_id), payload)
+    for object_id, (name, template) in sensors.items():
+        yield (
+            discovery_topic("sensor", object_id),
+            {
+                "name": name,
+                "object_id": object_id,
+                "unique_id": f"clock_{object_id}",
+                "state_topic": topics.system_state,
+                "value_template": template,
+                "device": device,
+                "availability_topic": topics.availability,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            },
+        )

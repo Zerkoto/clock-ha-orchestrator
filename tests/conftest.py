@@ -46,4 +46,3 @@ def booking(
         needs_attention=status == BookingStatus.UNKNOWN,
         attention_reason="unknown_clock_status" if status == BookingStatus.UNKNOWN else "none",
     )
-

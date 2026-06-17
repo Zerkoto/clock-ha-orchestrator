@@ -1,0 +1,11 @@
+user clock_ha_orchestrator
+topic readwrite hotel/v1/#
+topic readwrite homeassistant/#
+
+user home_assistant
+topic readwrite hotel/v1/#
+topic readwrite homeassistant/#
+
+user future_adapter
+topic read hotel/v1/rooms/+/intent/state
+topic write hotel/v1/rooms/+/reported/state

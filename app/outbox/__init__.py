@@ -1,2 +1,1 @@
 """Transactional outbox package."""
-

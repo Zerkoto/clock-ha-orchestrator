@@ -44,4 +44,3 @@ class AttentionReason(StrEnum):
     INVALID_POLICY = "invalid_policy"
     REJECTED_MANUAL_COMMAND = "rejected_manual_command"
     CLOCK_SYNC_STALE = "clock_sync_stale"
-

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime
 from uuid import UUID
 
@@ -134,12 +132,6 @@ def derive_room_intent(
     )
 
 
-def stable_intent_version(intent: DesiredRoomIntent) -> int:
-    encoded = json.dumps(intent.stable_payload(), sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-    return int(digest[:12], 16)
-
-
 def _build_intent(
     *,
     state: RoomStateEvaluation,
@@ -151,7 +143,7 @@ def _build_intent(
     reason: str,
     correlation_id: UUID | None,
 ) -> DesiredRoomIntent:
-    intent = DesiredRoomIntent(
+    return DesiredRoomIntent(
         room_key=state.room_key or "",
         intent_version=0,
         automation_phase=state.phase,
@@ -164,5 +156,3 @@ def _build_intent(
         reason=reason,
         **({"correlation_id": correlation_id} if correlation_id else {}),
     )
-    return intent.model_copy(update={"intent_version": stable_intent_version(intent)})
-

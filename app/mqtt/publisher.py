@@ -14,7 +14,7 @@ class MqttPublisher(Protocol):
         *,
         qos: int = 1,
         retain: bool = True,
-    ) -> None:
+    ) -> Any:
         """Publish a payload to MQTT."""
 
 

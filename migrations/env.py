@@ -1,4 +1,5 @@
 from logging.config import fileConfig
+from os import environ
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -11,6 +12,10 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+database_url = environ.get("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
 
 
 def run_migrations_offline() -> None:
@@ -39,4 +44,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

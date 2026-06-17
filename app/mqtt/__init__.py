@@ -1,2 +1,1 @@
 """MQTT integration package."""
-

@@ -163,4 +163,3 @@ def downgrade() -> None:
         "properties",
     ):
         op.drop_table(table)
-

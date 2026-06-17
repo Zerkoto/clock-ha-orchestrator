@@ -86,4 +86,3 @@ def test_manual_override_intent_uses_override(policy, now, room_214) -> None:
     assert intent.control_mode == ControlMode.MANUAL
     assert intent.hvac.mode == ManualHvacMode.COOL
     assert intent.hvac.target_temperature_c == 20
-

@@ -146,7 +146,7 @@ def evaluate_room(
             effective_from=now,
         )
 
-    if override and override.is_active(now, checkout_at(selected, policy)):
+    if override and override.is_active(now, clock_booking_id=selected.clock_booking_id):
         return RoomStateEvaluation(
             room_key=room.key,
             phase=AutomationPhase.MANUAL_OVERRIDE,
