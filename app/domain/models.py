@@ -196,4 +196,3 @@ class RoomStateEvaluation(BaseModel):
     reason: str
     effective_from: datetime
     expires_at: datetime | None = None
-

@@ -57,4 +57,3 @@ class OutboxPublisher:
                     )
                 )
         return results
-

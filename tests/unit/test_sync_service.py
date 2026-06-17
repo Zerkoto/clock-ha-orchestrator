@@ -94,4 +94,3 @@ async def test_failed_poll_does_not_advance_cursor() -> None:
 
     assert result.success is False
     assert result.next_cursor == cursor
-

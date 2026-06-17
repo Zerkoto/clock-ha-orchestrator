@@ -123,13 +123,16 @@ slice:
 11. MQTT topic contract and serialization helpers.
 12. Home Assistant MQTT Discovery config generation.
 13. Home Assistant dashboard generator from room inventory YAML.
-14. Transactional outbox publisher helper.
-15. FastAPI shell endpoints.
-16. Dockerfile and Docker Compose.
-17. Example Mosquitto, Home Assistant, policy and room registry config.
-18. Documentation under `docs/`.
-19. GitHub Actions CI.
-20. Unit tests.
+14. DB-backed Clock sync application service for normalized booking upsert,
+    physical-room assignment history, affected-room state recalculation and
+    transactional MQTT outbox event creation.
+15. Transactional outbox publisher helper.
+16. FastAPI shell endpoints.
+17. Dockerfile and Docker Compose.
+18. Example Mosquitto, Home Assistant, policy and room registry config.
+19. Documentation under `docs/`.
+20. GitHub Actions CI.
+21. Unit tests.
 
 ## Important Files
 
@@ -157,6 +160,7 @@ app/clock/interface.py
 app/clock/rest.py
 app/clock/normalizer.py
 app/clock/sync.py
+app/clock/db_sync.py
 app/domain/models.py
 app/domain/enums.py
 app/domain/state_machine.py
@@ -184,15 +188,17 @@ Commands:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
 ```
 
-Result:
+Result after `codex/add-db-sync-outbox`:
 
 ```text
-pytest: 23 passed
+pytest: 30 passed
 ruff: All checks passed
-mypy: Success, no issues found in 30 source files
+ruff format --check: 43 files already formatted
+mypy: Success, no issues found in 31 source files
 ```
 
 Docker was not run during the initial scaffold because Docker was not available
@@ -346,16 +352,12 @@ Important invariants:
 The most useful next production slice is DB-backed synchronization and outbox
 creation:
 
-1. Implement repository/service layer for upserting normalized bookings.
-2. Persist sync runs and sync cursors.
-3. Do not advance cursor after partial failure.
-4. Detect physical-room assignment changes.
-5. Detect newly assigned rooms, assignment removal and room moves.
-6. Recalculate both old and new rooms during a move.
-7. Detect overlapping active bookings in a room.
-8. Persist room-state changes.
-9. Create outbox events inside the same DB transaction.
-10. Add integration tests around PostgreSQL transaction rollback and idempotency.
+1. Wire the DB-backed Clock sync application service into the scheduler/API
+   execution path.
+2. Add real PostgreSQL integration tests around transaction rollback,
+   concurrent sync attempts and migration application.
+3. Add sanitized Clock sandbox fixtures and contract tests once physical-room
+   fields and pagination are confirmed.
 
 Other important next work:
 
@@ -379,6 +381,7 @@ Local verification:
 cd C:\Users\zerko\Documents\GIT\clock-ha-orchestrator
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
 ```
 

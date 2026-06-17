@@ -29,4 +29,3 @@ class MqttTopics:
 
     def room_reported_state(self, room_key: str) -> str:
         return f"{self.prefix}/rooms/{room_key}/reported/state"
-

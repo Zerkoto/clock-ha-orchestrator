@@ -98,4 +98,3 @@ class ClockSyncService:
                 next_cursor=cursor,
                 error=exc.__class__.__name__,
             )
-

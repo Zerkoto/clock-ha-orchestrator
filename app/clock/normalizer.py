@@ -123,4 +123,3 @@ def _parse_date(value: Any) -> date:
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
     return date.fromisoformat(str(value))
-

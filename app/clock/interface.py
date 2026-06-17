@@ -26,4 +26,3 @@ class ClockClient(Protocol):
 
     async def list_rooms(self) -> list[dict[str, Any]]:
         """Return raw Clock physical room payloads from a documented, sandbox-confirmed endpoint."""
-

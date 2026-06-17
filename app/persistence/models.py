@@ -5,22 +5,27 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+JSON_DOCUMENT = JSON().with_variant(JSONB, "postgresql")
+
 
 class Base(DeclarativeBase):
-    type_annotation_map = {dict[str, Any]: JSONB}
+    type_annotation_map = {dict[str, Any]: JSON_DOCUMENT}
 
 
 class Property(Base):
@@ -34,7 +39,10 @@ class Property(Base):
 
 class Room(Base):
     __tablename__ = "rooms"
-    __table_args__ = (UniqueConstraint("property_id", "clock_room_id"),)
+    __table_args__ = (
+        UniqueConstraint("property_id", "key"),
+        UniqueConstraint("property_id", "clock_room_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     property_id: Mapped[UUID] = mapped_column(ForeignKey("properties.id"))
@@ -80,7 +88,15 @@ class Booking(Base):
 
 class BookingRoomAssignment(Base):
     __tablename__ = "booking_room_assignments"
-    __table_args__ = (UniqueConstraint("booking_id", "is_current"),)
+    __table_args__ = (
+        Index(
+            "uq_booking_room_assignments_current",
+            "booking_id",
+            unique=True,
+            postgresql_where=text("is_current"),
+            sqlite_where=text("is_current"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     booking_id: Mapped[UUID] = mapped_column(ForeignKey("bookings.id"))
@@ -128,6 +144,7 @@ class RoomPolicyOverride(Base):
 
 class SyncCursor(Base):
     __tablename__ = "sync_cursors"
+    __table_args__ = (UniqueConstraint("property_id", "source"),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     property_id: Mapped[UUID] = mapped_column(ForeignKey("properties.id"))
@@ -174,6 +191,6 @@ class AuditEvent(Base):
     booking_id: Mapped[UUID | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
     event_type: Mapped[str] = mapped_column(String(120))
     message: Mapped[str] = mapped_column(Text)
-    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     correlation_id: Mapped[UUID]

@@ -39,4 +39,3 @@ def test_dashboard_has_floor_view_from_registry() -> None:
 
     assert any(view["title"] == "Floor 2" for view in dashboard["views"])
     assert dashboard["views"][0]["type"] == "sections"
-

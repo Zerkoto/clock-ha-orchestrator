@@ -73,4 +73,3 @@ def booking(clock_booking_id: str) -> dict[str, Any]:
 @router.get("/api/v1/audit")
 def audit() -> list[dict[str, Any]]:
     return []
-

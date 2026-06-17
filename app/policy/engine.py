@@ -165,4 +165,3 @@ def _build_intent(
         **({"correlation_id": correlation_id} if correlation_id else {}),
     )
     return intent.model_copy(update={"intent_version": stable_intent_version(intent)})
-

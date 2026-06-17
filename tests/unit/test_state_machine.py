@@ -90,4 +90,3 @@ def test_manual_override_takes_precedence(policy, now, room_214) -> None:
     result = evaluate_room(room_214, [booking()], now, policy, override)
 
     assert result.phase == AutomationPhase.MANUAL_OVERRIDE
-
