@@ -19,6 +19,32 @@ deployment for this repository.
 - Source brief: originally created from
   `D:\Projects\Klimatici\Clock PMS+ to Home Assistant Orchestration Project.docx`.
 
+## Repository And Branching Rules
+
+Branch discipline is important in this repository.
+
+1. Default production branch: `main`.
+2. Do not commit directly to `main` for normal improvements, fixes,
+   documentation updates, experiments, or agent-driven work.
+3. Before making changes, create a fresh feature branch from current `main`.
+4. Use a prefix that identifies the agent/tool that initiated the work:
+   - Codex work uses `codex/<short-description>`.
+   - Grok work uses `Grok/<short-description>`.
+   - Other AI agents should use `<AgentName>/<short-description>`.
+   - Human-only work may use a normal descriptive feature branch.
+5. Keep branch names short, lowercase after the prefix where practical, and
+   focused on the change, for example
+   `codex/add-db-backed-sync-service`.
+6. Push the feature branch and open a pull request when the change is ready for
+   review.
+7. Only merge to `main` after the relevant checks pass and the user approves the
+   change.
+8. If the user explicitly asks for an urgent direct-main change, record that
+   exception in this file or in the pull-request/commit notes.
+
+Future agents must preserve this convention. If a branch already exists for the
+same task, inspect it first instead of creating a competing branch.
+
 ## High-Level Purpose
 
 This repository implements a hardware-neutral integration between Clock PMS+
@@ -199,9 +225,18 @@ The local `main` branch tracks `origin/main`.
 Useful checks:
 
 ```powershell
+git fetch origin
+git switch main
+git pull --ff-only
 git status -sb
 git remote -v
 git log --oneline -5
+```
+
+Before making edits, create a task branch, for example:
+
+```powershell
+git switch -c codex/add-db-backed-sync-service
 ```
 
 ## Clock API Status
@@ -381,6 +416,12 @@ Please inspect the current repo first. Read README.md, AI_AGENT_HANDOFF.md,
 docs/architecture.md, docs/clock-api-mapping.md, docs/mqtt-contract.md,
 docs/future-adapter-contract.md and docs/operations-runbook.md.
 
+Before changing files, update from `origin/main` and create a new feature
+branch. Codex work must use `codex/<short-description>`, Grok work must use
+`Grok/<short-description>`, and other AI agents should use
+`<AgentName>/<short-description>`. Do not commit directly to `main` unless the
+user explicitly asks for that exception.
+
 This project is a Python 3.12 FastAPI service for a hotel HBMS / automation
 system in Razlog, Bulgaria. It integrates Clock PMS+ with Home Assistant
 through MQTT for approximately 275 apartments.
@@ -415,4 +456,3 @@ next production slice is DB-backed synchronization/upsert plus assignment-change
 detection and transactional outbox event creation, unless inspection reveals a
 more urgent issue.
 ```
-
