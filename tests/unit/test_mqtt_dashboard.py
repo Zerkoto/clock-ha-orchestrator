@@ -28,12 +28,19 @@ def test_discovery_uses_stable_unique_ids() -> None:
     )
     control_mode = configs["homeassistant/select/room_214_control_mode/config"]
     assert control_mode["command_topic"] == "hotel/v1/rooms/214/control/mode/set"
+    assert control_mode["state_topic"] == "hotel/v1/rooms/214/control/state"
     assert control_mode["availability_topic"] == (
         "hotel/v1/system/clock-ha-orchestrator/availability"
     )
     hvac_mode = configs["homeassistant/select/room_214_manual_hvac_mode/config"]
     assert hvac_mode["state_topic"] == "hotel/v1/rooms/214/control/state"
     assert hvac_mode["command_topic"] == "hotel/v1/rooms/214/control/hvac-mode/set"
+    temperature = configs["homeassistant/number/room_214_manual_temperature/config"]
+    assert temperature["unit_of_measurement"] == "°C"
+    water_heater = configs["homeassistant/switch/room_214_manual_water_heater/config"]
+    assert water_heater["value_template"] == (
+        "{{ 'on' if value_json.manual_water_heater_enabled else 'off' }}"
+    )
     assert "homeassistant/button/room_214_return_to_automatic/config" in configs
 
 

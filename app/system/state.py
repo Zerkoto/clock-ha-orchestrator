@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.domain.enums import AutomationPhase, BookingStatus, ControlMode
+from app.domain.enums import AutomationPhase, BookingStatus
 from app.persistence import models as db
 
 
@@ -37,6 +38,7 @@ def build_system_state(
     ).scalar_one_or_none()
 
     latest_states = _latest_room_states(session)
+    hotel_now = now.astimezone(ZoneInfo(property_row.timezone))
     lag_seconds = (
         int((now - last_success.finished_at).total_seconds())
         if last_success is not None and last_success.finished_at is not None
@@ -62,13 +64,17 @@ def build_system_state(
         ),
         "checked_in_rooms": _count_bookings(session, property_row.id, BookingStatus.CHECKED_IN),
         "expected_rooms": _count_bookings(session, property_row.id, BookingStatus.EXPECTED),
-        "arrivals_today": _count_arrivals(session, property_row.id, now),
-        "departures_today": _count_departures(session, property_row.id, now),
+        "arrivals_today": _count_arrivals(session, property_row.id, hotel_now),
+        "departures_today": _count_departures(session, property_row.id, hotel_now),
         "unassigned_arrivals": _count_unassigned_arrivals(session, property_row.id),
         "room_conflicts": sum(
             1 for state in latest_states if state.automation_phase == AutomationPhase.CONFLICT.value
         ),
-        "active_manual_overrides": _count_active_overrides(session, now),
+        "active_manual_overrides": sum(
+            1
+            for state in latest_states
+            if state.automation_phase == AutomationPhase.MANUAL_OVERRIDE.value
+        ),
         "rooms_needing_attention": sum(1 for state in latest_states if state.needs_attention),
         "pending_outbox": _count_outbox(session, "pending", "retrying", "publishing"),
         "dead_letter_outbox": _count_outbox(session, "dead_letter"),
@@ -143,7 +149,7 @@ def _count_bookings(session: Session, property_id: Any, status: BookingStatus) -
 
 
 def _count_arrivals(session: Session, property_id: Any, now: datetime) -> int:
-    today = now.astimezone(UTC).date()
+    today = now.date()
     return (
         session.scalar(
             select(func.count())
@@ -158,7 +164,7 @@ def _count_arrivals(session: Session, property_id: Any, now: datetime) -> int:
 
 
 def _count_departures(session: Session, property_id: Any, now: datetime) -> int:
-    today = now.astimezone(UTC).date()
+    today = now.date()
     return (
         session.scalar(
             select(func.count())
@@ -189,26 +195,6 @@ def _count_unassigned_arrivals(session: Session, property_id: Any) -> int:
                 db.Booking.property_id == property_id,
                 db.Booking.booking_status == BookingStatus.EXPECTED.value,
                 ~current_assignment_exists,
-            )
-        )
-        or 0
-    )
-
-
-def _count_active_overrides(session: Session, now: datetime) -> int:
-    return (
-        session.scalar(
-            select(func.count())
-            .select_from(db.RoomPolicyOverride)
-            .where(
-                db.RoomPolicyOverride.control_mode != ControlMode.AUTOMATIC.value,
-                (
-                    (
-                        db.RoomPolicyOverride.expires_at.is_(None)
-                        & db.RoomPolicyOverride.until_checkout
-                    )
-                    | (db.RoomPolicyOverride.expires_at > now)
-                ),
             )
         )
         or 0

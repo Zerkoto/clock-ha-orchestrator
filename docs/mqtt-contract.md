@@ -72,4 +72,37 @@ accepted/rejected commands, and publishes authoritative control state to:
 hotel/v1/rooms/{room_key}/control/state
 ```
 
+Accepted payloads are simple Home Assistant command values:
+
+- `control/mode/set`: `automatic`, `manual` or `off`
+- `control/hvac-mode/set`: `off`, `heat`, `cool` or `auto`
+- `control/temperature/set`: numeric Celsius target, clamped by policy
+- `control/duration/set`: `60`, `240`, `720` or `until_checkout`
+- `control/water-heater/set`: `on` or `off`
+- `control/return-to-automatic/set`: `return`
+
+The latest override command for a room is authoritative. A return-to-automatic
+command prevents older manual rows from becoming active again. Expired timed
+overrides also return the room to automatic policy rather than reviving older
+commands.
+
+`control/state` is retained and has no guest PII:
+
+```json
+{
+  "schema_version": 1,
+  "room_key": "214",
+  "control_mode": "manual",
+  "manual_hvac_mode": "heat",
+  "manual_target_temperature_c": 21.5,
+  "override_duration": "60",
+  "manual_water_heater_enabled": false,
+  "active": true,
+  "until_checkout": false,
+  "expires_at": "2026-12-20T11:05:00+00:00",
+  "command_id": "00000000-0000-0000-0000-000000000000",
+  "updated_at": "2026-12-20T10:05:00+00:00"
+}
+```
+
 Home Assistant must never publish directly to future hardware topics.

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clock.sync import SyncCursorState, SyncRunResult
-from app.domain.enums import AttentionReason, BookingStatus, ControlMode, ManualHvacMode
+from app.domain.enums import AttentionReason, BookingStatus
 from app.domain.models import (
     DesiredRoomIntent,
     HotelPolicy,
@@ -24,6 +24,7 @@ from app.domain.models import (
 from app.domain.state_machine import evaluate_room, evaluate_unassigned_booking
 from app.mqtt.topics import MqttTopics
 from app.persistence import models as db
+from app.policy.control import latest_override_row, manual_override_from_row, override_row_is_active
 from app.policy.engine import derive_room_intent
 
 CLOCK_BOOKINGS_CURSOR_SOURCE = "clock_bookings"
@@ -205,6 +206,36 @@ class ClockDbSyncService:
             recalculation = self._recalculate_rooms(
                 registry,
                 set(registry.domain_rooms_by_id),
+                observed_at=now_utc,
+                correlation_id=correlation_id,
+            )
+            return PersistedSyncResult(
+                sync_run_id=uuid4(),
+                success=True,
+                processed_bookings=0,
+                affected_room_keys=tuple(sorted(recalculation.affected_room_keys)),
+                room_states_created=recalculation.room_states_created,
+                outbox_events_created=recalculation.outbox_events_created,
+                audit_events_created=recalculation.audit_events_created,
+            )
+
+    def evaluate_room_keys(
+        self,
+        *,
+        room_keys: set[str],
+        now: datetime,
+        correlation_id: UUID | None = None,
+    ) -> PersistedSyncResult:
+        correlation_id = correlation_id or uuid4()
+        now_utc = _to_utc(now)
+        with self._session.begin():
+            registry = self._ensure_registry()
+            room_ids = {
+                room_row.id for key, room_row in registry.rooms_by_key.items() if key in room_keys
+            }
+            recalculation = self._recalculate_rooms(
+                registry,
+                room_ids,
                 observed_at=now_utc,
                 correlation_id=correlation_id,
             )
@@ -651,30 +682,12 @@ class ClockDbSyncService:
         ).scalar_one_or_none()
 
     def _active_override(self, room_id: UUID, now: datetime) -> ManualOverride | None:
-        row = self._session.execute(
-            select(db.RoomPolicyOverride)
-            .where(
-                db.RoomPolicyOverride.room_id == room_id,
-                db.RoomPolicyOverride.control_mode != ControlMode.AUTOMATIC.value,
-                (
-                    db.RoomPolicyOverride.until_checkout.is_(True)
-                    | (db.RoomPolicyOverride.expires_at > _to_utc(now))
-                ),
-            )
-            .order_by(db.RoomPolicyOverride.starts_at.desc(), db.RoomPolicyOverride.id.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+        row = latest_override_row(self._session, room_id)
         if row is None:
             return None
-        return ManualOverride(
-            control_mode=ControlMode(row.control_mode),
-            hvac_mode=ManualHvacMode(row.hvac_mode or ManualHvacMode.OFF.value),
-            target_temperature_c=row.target_temperature_c,
-            water_heater_enabled=row.water_heater_enabled,
-            expires_at=_optional_to_utc(row.expires_at),
-            until_checkout=row.until_checkout,
-            command_id=row.command_id,
-        )
+        if not override_row_is_active(row, now):
+            return None
+        return manual_override_from_row(row)
 
     def _load_normalized_bookings(self, property_row: db.Property) -> LoadedBookings:
         booking_rows = self._session.execute(

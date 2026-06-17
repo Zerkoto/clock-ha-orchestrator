@@ -40,8 +40,9 @@ class OutboxRetryPolicy:
 
 
 class OutboxPublisher:
-    def __init__(self, publisher: MqttPublisher) -> None:
+    def __init__(self, publisher: MqttPublisher, *, publish_timeout_seconds: int = 10) -> None:
         self._publisher = publisher
+        self._publish_timeout_seconds = publish_timeout_seconds
 
     def publish_pending(self, messages: list[PendingOutboxMessage]) -> list[OutboxPublishResult]:
         results: list[OutboxPublishResult] = []
@@ -53,7 +54,10 @@ class OutboxPublisher:
                     qos=message.qos,
                     retain=message.retain,
                 )
-                _wait_for_publish_ack(receipt)
+                _wait_for_publish_ack(
+                    receipt,
+                    timeout_seconds=self._publish_timeout_seconds,
+                )
                 results.append(
                     OutboxPublishResult(
                         message_id=message.id,
@@ -192,12 +196,15 @@ class OutboxStore:
         return timedelta(seconds=capped + jitter)
 
 
-def _wait_for_publish_ack(receipt: Any) -> None:
+def _wait_for_publish_ack(receipt: Any, *, timeout_seconds: int) -> None:
     if receipt is None:
         return
+    return_code = getattr(receipt, "rc", 0)
+    if return_code not in (0, None):
+        raise RuntimeError(f"MQTT publish failed with return code {return_code}")
     wait = getattr(receipt, "wait_for_publish", None)
     if callable(wait):
-        wait()
+        wait(timeout=timeout_seconds)
     is_published = getattr(receipt, "is_published", None)
     if callable(is_published) and not is_published():
         raise RuntimeError("MQTT publish was not acknowledged")

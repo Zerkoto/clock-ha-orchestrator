@@ -56,6 +56,12 @@ connectivity and Alembic head, optionally starts MQTT, publishes discovery and
 system state, and can run Clock sync, policy ticks and outbox worker loops when
 their feature flags are enabled.
 
+When MQTT is enabled, the service subscribes to the documented Home Assistant
+field command topics, generates server-side command IDs, audits accepted and
+rejected manual override commands, publishes retained `control/state`, and
+reevaluates the affected room through the same transactional outbox path as
+Clock sync.
+
 Generate the Home Assistant dashboard with:
 
 ```powershell
@@ -68,6 +74,6 @@ Home Assistant UI and install the generated dashboard YAML under
 
 ## Development Order
 
-The current implementation covers the first reviewable slice: scaffold, settings validation, typed domain model, deterministic state machine, policy/intent generation, Clock adapter boundary, MQTT topic/discovery helpers, dashboard generation, persistence models, tests, Docker Compose, and operations docs.
+The current implementation covers the first reviewable slice: scaffold, settings validation, typed domain model, deterministic state machine, policy/intent generation, Clock adapter boundary, MQTT topic/discovery helpers, Home Assistant command handling, dashboard generation, persistence models, tests, Docker Compose, and operations docs.
 
 Before implementing live Clock endpoint behavior, update `docs/clock-api-mapping.md` with either official Clock documentation references or sanitized sandbox payloads. Do not mark the service production-ready while endpoint, pagination and physical-room mappings remain unverified.

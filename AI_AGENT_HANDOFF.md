@@ -132,8 +132,9 @@ slice:
 16. Transactional outbox publisher and DB claim/retry/dead-letter helpers.
 17. DB-backed FastAPI endpoints for sync status, reconciliation, rooms,
     bookings and audit rows.
-18. Field-specific Home Assistant command discovery topics and valid Sections
-    dashboard generation.
+18. Field-specific Home Assistant command discovery topics, DB-backed command
+    consumer, retained `control/state` publication and valid Sections dashboard
+    generation.
 19. Dockerfile, Docker Compose and hardened Mosquitto examples.
 20. Documentation under `docs/`.
 21. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
@@ -172,6 +173,7 @@ app/domain/enums.py
 app/domain/state_machine.py
 app/policy/engine.py
 app/policy/commands.py
+app/policy/control.py
 app/mqtt/topics.py
 app/mqtt/client.py
 app/mqtt/discovery.py
@@ -200,13 +202,14 @@ Commands:
 .\.venv\Scripts\python.exe -m mypy app
 ```
 
-Result after the runtime continuation on `codex/add-db-sync-outbox`:
+Result after the runtime and command-lifecycle continuation on
+`codex/add-db-sync-outbox`:
 
 ```text
-pytest: 37 passed
+pytest: 42 passed
 ruff: All checks passed
-ruff format --check: 49 files already formatted
-mypy: Success, no issues found in 35 source files
+ruff format --check: all files already formatted
+mypy: Success, no issues found in 36 source files
 alembic heads: 20260617_0003 (head)
 ```
 
@@ -309,7 +312,13 @@ hotel/v1/system/clock-ha-orchestrator/availability
 hotel/v1/system/clock-ha-orchestrator/state
 hotel/v1/rooms/{room_key}/pms/state
 hotel/v1/rooms/{room_key}/intent/state
-hotel/v1/rooms/{room_key}/control/set
+hotel/v1/rooms/{room_key}/control/state
+hotel/v1/rooms/{room_key}/control/mode/set
+hotel/v1/rooms/{room_key}/control/hvac-mode/set
+hotel/v1/rooms/{room_key}/control/temperature/set
+hotel/v1/rooms/{room_key}/control/duration/set
+hotel/v1/rooms/{room_key}/control/water-heater/set
+hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 hotel/v1/rooms/{room_key}/reported/state
 ```
 
@@ -352,23 +361,18 @@ Important invariants:
 2. Clock physical room ID is unique per property.
 3. A booking has no more than one current physical room assignment.
 4. UTC is used internally.
-5. Hotel policy is evaluated in Europe/Sofia.
+5. Hotel policy and "today" counters are evaluated in Europe/Sofia.
 6. Semantic duplicate updates should not create duplicate domain events.
 7. Overlapping active bookings assigned to one physical room generate a conflict.
 
 ## Current Gaps And Next Useful Slice
 
-The most useful next production slice is completing command/runtime integration
-and adding real PostgreSQL/Docker verification:
+The most useful next production slice is adding real PostgreSQL/Docker
+verification and hardening the remaining runtime operations:
 
-1. Implement the MQTT command consumer and command-processing service for the
-   field-specific Home Assistant control topics.
-2. Publish authoritative `control/state` after accepted/rejected commands and
-   add tests for command parsing, audit rows, override expiry and return to
-   automatic mode.
-3. Add real PostgreSQL integration tests around migration application,
+1. Add real PostgreSQL integration tests around migration application,
    transaction rollback, concurrent sync attempts and concurrent outbox claims.
-4. Add sanitized Clock sandbox fixtures and contract tests once physical-room
+2. Add sanitized Clock sandbox fixtures and contract tests once physical-room
    fields, filters and pagination are confirmed.
 
 Other important next work:
@@ -379,8 +383,7 @@ Other important next work:
    command.
 3. Run Docker Compose once Docker is available and real Mosquitto password/ACL
    files have been generated.
-4. Add sanitized Clock sandbox fixtures and contract tests.
-5. Expand end-to-end tests for unassigned booking -> assigned room ->
+4. Expand end-to-end tests for unassigned booking -> assigned room ->
    pre-arrival -> check-in -> manual override -> room move -> checkout.
 
 ## Commands For Future Agents

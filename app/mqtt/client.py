@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ssl
 from collections.abc import Callable
+from contextlib import suppress
+from threading import Event
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -12,14 +14,23 @@ MessageHandler = Callable[[str, bytes], None]
 
 
 class ManagedMqttClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        on_connect: Callable[[], None] | None = None,
+    ) -> None:
         self._settings = settings
+        self._on_connected = on_connect
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=settings.mqtt_client_id,
             protocol=mqtt.MQTTv5,
         )
         self._connected = False
+        self._connect_event = Event()
+        self._disconnect_event = Event()
+        self._connect_error: str | None = None
         self._handlers: dict[str, MessageHandler] = {}
         if settings.mqtt_username:
             self._client.username_pw_set(
@@ -34,6 +45,7 @@ class ManagedMqttClient:
             qos=1,
             retain=True,
         )
+        self._client.reconnect_delay_set(min_delay=1, max_delay=30)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
@@ -43,18 +55,33 @@ class ManagedMqttClient:
         return self._connected
 
     def connect(self) -> None:
+        self._connect_event.clear()
+        self._disconnect_event.clear()
+        self._connect_error = None
         self._client.connect(self._settings.mqtt_host, self._settings.mqtt_port, keepalive=60)
         self._client.loop_start()
+        if not self._connect_event.wait(self._settings.mqtt_connect_timeout_seconds):
+            self._client.loop_stop()
+            raise TimeoutError("MQTT connection timed out")
+        if not self._connected:
+            self._client.loop_stop()
+            raise ConnectionError(self._connect_error or "MQTT connection failed")
 
     def disconnect(self) -> None:
-        self.publish(
-            f"{self._settings.mqtt_topic_prefix}/system/clock-ha-orchestrator/availability",
-            "offline",
-            qos=1,
-            retain=True,
-        )
-        self._client.loop_stop()
+        if self._connected:
+            receipt = self.publish(
+                f"{self._settings.mqtt_topic_prefix}/system/clock-ha-orchestrator/availability",
+                "offline",
+                qos=1,
+                retain=True,
+            )
+            _wait_for_receipt(
+                receipt,
+                timeout_seconds=self._settings.mqtt_publish_timeout_seconds,
+            )
         self._client.disconnect()
+        self._disconnect_event.wait(self._settings.mqtt_connect_timeout_seconds)
+        self._client.loop_stop()
 
     def publish(
         self,
@@ -68,7 +95,8 @@ class ManagedMqttClient:
 
     def subscribe(self, topic: str, handler: MessageHandler) -> None:
         self._handlers[topic] = handler
-        self._client.subscribe(topic, qos=1)
+        if self._connected:
+            self._client.subscribe(topic, qos=1)
 
     def _on_connect(
         self,
@@ -78,8 +106,18 @@ class ManagedMqttClient:
         reason_code: mqtt.ReasonCode,
         properties: mqtt.Properties | None,
     ) -> None:
-        del client, userdata, flags, properties
+        del userdata, flags, properties
         self._connected = not reason_code.is_failure
+        if self._connected:
+            self._connect_error = None
+            for topic in self._handlers:
+                client.subscribe(topic, qos=1)
+            if self._on_connected is not None:
+                with suppress(Exception):
+                    self._on_connected()
+        else:
+            self._connect_error = str(reason_code)
+        self._connect_event.set()
 
     def _on_disconnect(
         self,
@@ -91,6 +129,7 @@ class ManagedMqttClient:
     ) -> None:
         del client, userdata, flags, reason_code, properties
         self._connected = False
+        self._disconnect_event.set()
 
     def _on_message(
         self,
@@ -101,4 +140,13 @@ class ManagedMqttClient:
         del client, userdata
         for topic, handler in self._handlers.items():
             if mqtt.topic_matches_sub(topic, message.topic):
-                handler(message.topic, bytes(message.payload))
+                try:
+                    handler(message.topic, bytes(message.payload))
+                except Exception:
+                    continue
+
+
+def _wait_for_receipt(receipt: Any, *, timeout_seconds: int) -> None:
+    wait = getattr(receipt, "wait_for_publish", None)
+    if callable(wait):
+        wait(timeout=timeout_seconds)

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -29,6 +29,7 @@ from app.mqtt.discovery import room_discovery_configs, system_discovery_configs
 from app.mqtt.publisher import serialize_payload
 from app.mqtt.topics import MqttTopics
 from app.outbox.service import OutboxPublisher, OutboxRetryPolicy, OutboxStore
+from app.policy.control import RoomControlCommandService
 from app.settings import Settings
 from app.system.state import build_system_state
 
@@ -40,6 +41,8 @@ class RuntimeHealth:
     mqtt_connected: bool = False
     workers_started: bool = False
     errors: list[str] = field(default_factory=list)
+    worker_errors: dict[str, str] = field(default_factory=dict)
+    requires_mqtt: bool = False
 
     @property
     def ready(self) -> bool:
@@ -49,8 +52,6 @@ class RuntimeHealth:
             and (self.mqtt_connected or not self.requires_mqtt)
             and not self.errors
         )
-
-    requires_mqtt: bool = False
 
 
 class AppRuntime:
@@ -78,11 +79,16 @@ class AppRuntime:
         self._verify_migration_head()
         self.clock_client, self.clock_mapping = self._build_clock_client()
         if self.settings.mqtt_enabled:
-            self.mqtt_client = ManagedMqttClient(self.settings)
+            self.mqtt_client = ManagedMqttClient(
+                self.settings,
+                on_connect=self._publish_mqtt_reconnect_state,
+            )
             self.mqtt_client.connect()
-            self.health.mqtt_connected = self.mqtt_client.connected
+            self.refresh_health()
+            self.subscribe_home_assistant_commands()
             self.publish_availability("online")
             self.publish_discovery()
+            self.publish_control_states()
             self.publish_system_state()
         self._start_background_tasks()
         self.health.workers_started = bool(self._tasks)
@@ -95,7 +101,7 @@ class AppRuntime:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         if self.mqtt_client is not None:
             self.mqtt_client.disconnect()
-            self.health.mqtt_connected = False
+            self.refresh_health()
         self.engine.dispose()
 
     async def run_sync_once(self, *, now: datetime | None = None) -> dict[str, object]:
@@ -152,9 +158,18 @@ class AppRuntime:
     async def run_outbox_once(self) -> int:
         if self.mqtt_client is None:
             return 0
+        self.refresh_health()
+        retry_policy = OutboxRetryPolicy(max_attempts=self.settings.outbox_max_attempts)
+        with self.session_factory() as session, session.begin():
+            store = OutboxStore(session, retry_policy)
+            store.release_stale_publishing(
+                now=datetime.now(UTC),
+                older_than=timedelta(seconds=self.settings.outbox_stale_publish_seconds),
+            )
+        if not self.mqtt_client.connected:
+            return 0
         now = datetime.now(UTC)
         worker_id = self.settings.mqtt_client_id
-        retry_policy = OutboxRetryPolicy(max_attempts=self.settings.outbox_max_attempts)
         with self.session_factory() as session, session.begin():
             store = OutboxStore(session, retry_policy)
             messages = store.claim_pending(
@@ -162,12 +177,101 @@ class AppRuntime:
                 now=now,
                 limit=self.settings.outbox_batch_size,
             )
-        results = OutboxPublisher(self.mqtt_client).publish_pending(messages)
+        results = OutboxPublisher(
+            self.mqtt_client,
+            publish_timeout_seconds=self.settings.mqtt_publish_timeout_seconds,
+        ).publish_pending(messages)
         with self.session_factory() as session, session.begin():
             store = OutboxStore(session, retry_policy)
             store.record_results(results, now=datetime.now(UTC))
         self.publish_system_state()
         return len(messages)
+
+    def refresh_health(self) -> None:
+        self.health.mqtt_connected = (
+            self.mqtt_client.connected if self.mqtt_client is not None else False
+        )
+
+    def _publish_mqtt_reconnect_state(self) -> None:
+        self.refresh_health()
+        self.publish_availability("online")
+        self.publish_control_states()
+        self.publish_system_state()
+
+    def subscribe_home_assistant_commands(self) -> None:
+        if self.mqtt_client is None:
+            return
+        for room in self.registry.rooms:
+            subscriptions = {
+                self.topics.room_control_mode_set(room.key): "mode",
+                self.topics.room_control_hvac_mode_set(room.key): "hvac-mode",
+                self.topics.room_control_temperature_set(room.key): "temperature",
+                self.topics.room_control_duration_set(room.key): "duration",
+                self.topics.room_control_water_heater_set(room.key): "water-heater",
+                self.topics.room_control_return_to_automatic_set(room.key): ("return-to-automatic"),
+            }
+            for topic, command_field in subscriptions.items():
+                self.mqtt_client.subscribe(
+                    topic,
+                    self._control_handler(room.key, command_field),
+                )
+
+    def _control_handler(
+        self,
+        room_key: str,
+        command_field: str,
+    ) -> Callable[[str, bytes], None]:
+        def handle(received_topic: str, payload: bytes) -> None:
+            self.handle_control_message(
+                room_key=room_key,
+                field=command_field,
+                topic=received_topic,
+                payload=payload,
+            )
+
+        return handle
+
+    def handle_control_message(
+        self,
+        *,
+        room_key: str,
+        field: str,
+        topic: str,
+        payload: bytes,
+    ) -> None:
+        del topic
+        now = datetime.now(UTC)
+        correlation_id = uuid4()
+        try:
+            with self.session_factory() as session, session.begin():
+                result = RoomControlCommandService(
+                    session=session,
+                    room_registry=self.registry,
+                    policy=self.policy.automation,
+                    topics=self.topics,
+                ).apply_mqtt_command(
+                    room_key=room_key,
+                    field=field,
+                    payload=payload,
+                    now=now,
+                    correlation_id=correlation_id,
+                )
+            if result.accepted and result.room_key is not None:
+                with self.session_factory() as session:
+                    ClockDbSyncService(
+                        session=session,
+                        room_registry=self.registry,
+                        policy=self.policy,
+                        topics=self.topics,
+                    ).evaluate_room_keys(
+                        room_keys={result.room_key},
+                        now=now,
+                        correlation_id=result.correlation_id,
+                    )
+            self.health.worker_errors.pop("mqtt-command", None)
+        except Exception as exc:
+            self.health.worker_errors["mqtt-command"] = exc.__class__.__name__
+        self.publish_system_state()
 
     def publish_availability(self, status: str) -> None:
         if self.mqtt_client is None:
@@ -186,6 +290,7 @@ class AppRuntime:
     def publish_system_state(self) -> None:
         if self.mqtt_client is None:
             return
+        self.refresh_health()
         with self.session_factory() as session:
             payload = self.system_state(session)
         self.mqtt_client.publish(
@@ -195,7 +300,29 @@ class AppRuntime:
             retain=True,
         )
 
+    def publish_control_states(self) -> None:
+        if self.mqtt_client is None:
+            return
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            service = RoomControlCommandService(
+                session=session,
+                room_registry=self.registry,
+                policy=self.policy.automation,
+                topics=self.topics,
+            )
+            payloads = [
+                (
+                    self.topics.room_control_state(room.key),
+                    service.control_state_payload(room_key=room.key, now=now),
+                )
+                for room in self.registry.rooms
+            ]
+        for topic, payload in payloads:
+            self.mqtt_client.publish(topic, serialize_payload(payload), qos=1, retain=True)
+
     def system_state(self, session: Session) -> dict[str, object]:
+        self.refresh_health()
         return build_system_state(
             session,
             property_key=self.registry.property.key,
@@ -274,12 +401,12 @@ class AppRuntime:
         interval_seconds: int,
         callback: Callable[[], Awaitable[object]],
     ) -> None:
-        del name
         while not self._stopping.is_set():
             try:
                 await callback()
+                self.health.worker_errors.pop(name, None)
             except Exception as exc:
-                self.health.errors.append(exc.__class__.__name__)
+                self.health.worker_errors[name] = exc.__class__.__name__
             try:
                 await asyncio.wait_for(self._stopping.wait(), timeout=interval_seconds)
             except TimeoutError:

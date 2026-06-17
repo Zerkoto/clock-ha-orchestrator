@@ -3,7 +3,8 @@
 ## Time
 
 - Store application timestamps in UTC.
-- Evaluate hotel policy in `Europe/Sofia`.
+- Evaluate hotel policy and "today" counters in `Europe/Sofia` for Razlog,
+  Bulgaria.
 - Keep host and containers synchronized with NTP.
 
 ## Secrets
@@ -39,6 +40,12 @@ Regenerate and install the dashboard:
 ```
 
 Copy or mount the generated YAML to `/config/dashboards/hotel-reception.yaml`.
+
+Manual override controls publish only to the field-specific
+`hotel/v1/rooms/{room_key}/control/.../set` topics. The orchestrator generates
+server-side command IDs, audits accepted and rejected commands, and publishes
+retained `control/state`. Use the dashboard controls; do not publish directly
+to future hardware adapter topics.
 
 ## Mosquitto
 
@@ -81,5 +88,7 @@ Configure log rotation in the host/container runtime.
 
 - If Clock sync is stale, check Clock credentials, rate-limit errors and WAF/403 responses.
 - If MQTT is down, outbox rows remain pending and are retried after broker recovery.
+  Stale `publishing` rows are released by the outbox worker before claiming new
+  rows.
 - If Home Assistant restarts, publish MQTT Discovery again after receiving the HA birth/status topic.
 - If room conflicts appear, suppress normal automation and resolve physical room allocation in Clock.

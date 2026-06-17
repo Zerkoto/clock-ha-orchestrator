@@ -69,6 +69,7 @@ def live() -> dict[str, str]:
 
 @router.get("/health/ready")
 def ready(runtime: RuntimeDep) -> dict[str, Any]:
+    runtime.refresh_health()
     if not runtime.health.ready:
         raise HTTPException(
             status_code=503,
@@ -79,6 +80,7 @@ def ready(runtime: RuntimeDep) -> dict[str, Any]:
                 "mqtt_connected": runtime.health.mqtt_connected,
                 "workers_started": runtime.health.workers_started,
                 "errors": runtime.health.errors,
+                "worker_errors": runtime.health.worker_errors,
             },
         )
     return {
@@ -87,6 +89,7 @@ def ready(runtime: RuntimeDep) -> dict[str, Any]:
         "migration_current": runtime.health.migration_current,
         "mqtt_connected": runtime.health.mqtt_connected,
         "workers_started": runtime.health.workers_started,
+        "worker_errors": runtime.health.worker_errors,
     }
 
 

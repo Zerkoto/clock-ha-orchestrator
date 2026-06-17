@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     mqtt_tls: bool = False
     mqtt_topic_prefix: str = "hotel/v1"
     mqtt_client_id: str = "clock-ha-orchestrator"
+    mqtt_connect_timeout_seconds: int = Field(default=10, ge=1)
+    mqtt_publish_timeout_seconds: int = Field(default=10, ge=1)
 
     policy_scheduler_enabled: bool = False
     policy_tick_seconds: int = Field(default=60, ge=10)
@@ -48,6 +50,7 @@ class Settings(BaseSettings):
     outbox_poll_seconds: int = Field(default=5, ge=1)
     outbox_batch_size: int = Field(default=50, ge=1)
     outbox_max_attempts: int = Field(default=8, ge=1)
+    outbox_stale_publish_seconds: int = Field(default=120, ge=10)
     admin_api_key: SecretStr | None = None
 
     room_registry_path: Path = Path("config/rooms.example.yaml")

@@ -15,6 +15,7 @@ from app.clock.sync import SyncCursorState, SyncRunResult
 from app.domain.enums import AutomationPhase, ControlMode, ManualHvacMode
 from app.domain.models import PropertyRegistry, Room, RoomRegistry
 from app.persistence import models as db
+from app.policy.control import RoomControlCommandService
 from tests.conftest import booking
 
 NOW = datetime(2026, 12, 20, 10, 0, tzinfo=UTC)
@@ -251,6 +252,133 @@ def test_policy_tick_loads_active_manual_override(
         assert latest_intent.payload["automation_phase"] == AutomationPhase.MANUAL_OVERRIDE.value
         assert latest_intent.payload["control_mode"] == ControlMode.MANUAL.value
         assert latest_intent.payload["hvac"]["mode"] == ManualHvacMode.COOL.value
+
+
+def test_home_assistant_temperature_command_creates_override_state_and_intent(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    apply_sync(engine, registry, policy, [booking()], NOW)
+    with Session(engine) as session, session.begin():
+        result = RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy.automation,
+        ).apply_mqtt_command(
+            room_key="214",
+            field="temperature",
+            payload=b"21.5",
+            now=LATER,
+            correlation_id=CORRELATION_ID,
+        )
+
+    assert result.accepted is True
+
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session, room_registry=registry, policy=policy
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=LATER,
+            correlation_id=CORRELATION_ID,
+        )
+
+    with Session(engine) as session:
+        control_state = session.execute(
+            select(db.OutboxEvent)
+            .where(db.OutboxEvent.topic == "hotel/v1/rooms/214/control/state")
+            .order_by(db.OutboxEvent.created_at.desc(), db.OutboxEvent.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert control_state.payload["control_mode"] == ControlMode.MANUAL.value
+        assert control_state.payload["manual_target_temperature_c"] == 21.5
+
+        latest_intent = session.execute(
+            select(db.OutboxEvent)
+            .where(db.OutboxEvent.topic == "hotel/v1/rooms/214/intent/state")
+            .order_by(db.OutboxEvent.created_at.desc(), db.OutboxEvent.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert latest_intent.payload["automation_phase"] == AutomationPhase.MANUAL_OVERRIDE.value
+        assert latest_intent.payload["hvac"]["target_temperature_c"] == 21.5
+
+
+def test_return_to_automatic_suppresses_older_manual_override(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    apply_sync(engine, registry, policy, [booking()], NOW)
+    with Session(engine) as session, session.begin():
+        service = RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy.automation,
+        )
+        service.apply_mqtt_command(
+            room_key="214",
+            field="temperature",
+            payload=b"21.5",
+            now=NOW,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000444"),
+        )
+        service.apply_mqtt_command(
+            room_key="214",
+            field="return-to-automatic",
+            payload=b"return",
+            now=LATER,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000445"),
+        )
+
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session, room_registry=registry, policy=policy
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=LATER,
+            correlation_id=CORRELATION_ID,
+        )
+
+    with Session(engine) as session:
+        latest_intent = session.execute(
+            select(db.OutboxEvent)
+            .where(db.OutboxEvent.topic == "hotel/v1/rooms/214/intent/state")
+            .order_by(db.OutboxEvent.created_at.desc(), db.OutboxEvent.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert latest_intent.payload["automation_phase"] == AutomationPhase.PRE_ARRIVAL.value
+        assert latest_intent.payload["control_mode"] == ControlMode.AUTOMATIC.value
+
+
+def test_invalid_home_assistant_command_is_audited_without_outbox(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    apply_sync(engine, registry, policy, [booking()], NOW)
+    with Session(engine) as session, session.begin():
+        before = count_rows(session, db.OutboxEvent)
+        result = RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy.automation,
+        ).apply_mqtt_command(
+            room_key="214",
+            field="duration",
+            payload=b"15",
+            now=LATER,
+            correlation_id=CORRELATION_ID,
+        )
+
+        assert result.accepted is False
+        assert count_rows(session, db.OutboxEvent) == before
+        audit = session.execute(
+            select(db.AuditEvent)
+            .where(db.AuditEvent.event_type == "manual_override_command_rejected")
+            .limit(1)
+        ).scalar_one()
+        assert audit.payload["field"] == "duration"
 
 
 def test_failed_sync_run_does_not_advance_cursor(

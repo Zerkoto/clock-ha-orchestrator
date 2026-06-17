@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.outbox.service import (
+    OutboxPublisher,
     OutboxPublishResult,
     OutboxRetryPolicy,
     OutboxStore,
+    PendingOutboxMessage,
 )
 from app.persistence import models as db
 
@@ -124,6 +126,26 @@ def test_retry_dead_letters_makes_rows_claimable_again() -> None:
         assert event.last_error is None
 
 
+def test_outbox_publisher_marks_unacknowledged_publish_as_failed() -> None:
+    publisher = OutboxPublisher(
+        FakePublisher(FakeReceipt(published=False)),
+        publish_timeout_seconds=1,
+    )
+
+    result = publisher.publish_pending(
+        [
+            PendingOutboxMessage(
+                id=CORRELATION_ID,
+                topic="hotel/v1/test",
+                payload={"schema_version": 1},
+            )
+        ]
+    )
+
+    assert result[0].published is False
+    assert result[0].error == "RuntimeError"
+
+
 def add_event(
     session: Session,
     *,
@@ -144,3 +166,24 @@ def add_event(
     session.add(event)
     session.flush()
     return event
+
+
+class FakeReceipt:
+    def __init__(self, *, published: bool) -> None:
+        self._published = published
+        self.timeout: int | None = None
+
+    def wait_for_publish(self, timeout: int | None = None) -> None:
+        self.timeout = timeout
+
+    def is_published(self) -> bool:
+        return self._published
+
+
+class FakePublisher:
+    def __init__(self, receipt: FakeReceipt) -> None:
+        self._receipt = receipt
+
+    def publish(self, topic: str, payload: str | bytes, *, qos: int, retain: bool):
+        del topic, payload, qos, retain
+        return self._receipt
