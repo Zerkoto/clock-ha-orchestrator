@@ -724,6 +724,7 @@ class ClockDbSyncService:
         self._session.add(
             db.RoomPolicyOverride(
                 room_id=room_row.id,
+                booking_id=None,
                 command_id=uuid4(),
                 control_mode=ControlMode.AUTOMATIC.value,
                 hvac_mode=ManualHvacMode.OFF.value,
@@ -731,6 +732,7 @@ class ClockDbSyncService:
                 water_heater_enabled=None,
                 starts_at=observed_at,
                 expires_at=None,
+                checkout_at=None,
                 until_checkout=False,
                 created_by="policy_scheduler",
             )
@@ -791,7 +793,13 @@ class ClockDbSyncService:
             return None
         if not override_row_is_active(row, now):
             return None
-        return manual_override_from_row(row)
+        clock_booking_id = None
+        if row.until_checkout and row.booking_id is not None:
+            booking = self._session.get(db.Booking, row.booking_id)
+            if booking is None:
+                return None
+            clock_booking_id = booking.clock_booking_id
+        return manual_override_from_row(row, clock_booking_id=clock_booking_id)
 
     def _load_normalized_bookings(self, property_row: db.Property) -> LoadedBookings:
         booking_rows = self._session.execute(

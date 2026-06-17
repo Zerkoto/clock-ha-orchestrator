@@ -264,7 +264,7 @@ def test_home_assistant_temperature_command_creates_override_state_and_intent(
         result = RoomControlCommandService(
             session=session,
             room_registry=registry,
-            policy=policy.automation,
+            policy=policy,
         ).apply_mqtt_command(
             room_key="214",
             field="temperature",
@@ -314,7 +314,7 @@ def test_return_to_automatic_suppresses_older_manual_override(
         service = RoomControlCommandService(
             session=session,
             room_registry=registry,
-            policy=policy.automation,
+            policy=policy,
         )
         service.apply_mqtt_command(
             room_key="214",
@@ -362,7 +362,7 @@ def test_timed_manual_override_expires_and_publishes_automatic_control_state(
         RoomControlCommandService(
             session=session,
             room_registry=registry,
-            policy=policy.automation,
+            policy=policy,
         ).apply_mqtt_command(
             room_key="214",
             field="temperature",
@@ -426,7 +426,7 @@ def test_until_checkout_override_ends_at_checkout_and_clears_control_state(
         service = RoomControlCommandService(
             session=session,
             room_registry=registry,
-            policy=policy.automation,
+            policy=policy,
         )
         service.apply_mqtt_command(
             room_key="214",
@@ -481,6 +481,117 @@ def test_until_checkout_override_ends_at_checkout_and_clears_control_state(
     assert latest_intent["control_mode"] == ControlMode.AUTOMATIC.value
 
 
+def test_until_checkout_override_does_not_carry_to_next_guest_same_room(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    guest_a = booking(
+        status=BookingStatus.CHECKED_IN,
+        departure=date(2026, 12, 21),
+        clock_booking_id="booking-a",
+    ).model_copy(update={"payload_hash": "booking-a-in"})
+    apply_sync(engine, registry, policy, [guest_a], NOW)
+    with Session(engine) as session, session.begin():
+        service = RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        )
+        service.apply_mqtt_command(
+            room_key="214",
+            field="temperature",
+            payload=b"21.5",
+            now=LATER,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000452"),
+        )
+        result = service.apply_mqtt_command(
+            room_key="214",
+            field="duration",
+            payload=b"until_checkout",
+            now=LATER + timedelta(minutes=1),
+            correlation_id=UUID("00000000-0000-0000-0000-000000000453"),
+        )
+
+    assert result.accepted is True
+
+    with Session(engine) as session:
+        guest_a_row = session.execute(
+            select(db.Booking).where(db.Booking.clock_booking_id == "booking-a")
+        ).scalar_one()
+        until_checkout_row = session.execute(
+            select(db.RoomPolicyOverride)
+            .where(db.RoomPolicyOverride.until_checkout.is_(True))
+            .order_by(db.RoomPolicyOverride.starts_at.desc(), db.RoomPolicyOverride.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert until_checkout_row.booking_id == guest_a_row.id
+    assert utc_readback(until_checkout_row.checkout_at) == datetime(
+        2026,
+        12,
+        21,
+        9,
+        0,
+        tzinfo=UTC,
+    )
+
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=LATER + timedelta(minutes=2),
+            correlation_id=UUID("00000000-0000-0000-0000-000000000454"),
+        )
+
+    guest_a_checked_out = guest_a.model_copy(
+        update={
+            "booking_status": BookingStatus.CHECKED_OUT,
+            "source_booking_status": BookingStatus.CHECKED_OUT.value,
+            "payload_hash": "booking-a-out",
+        }
+    )
+    guest_b_checked_in = booking(
+        status=BookingStatus.CHECKED_IN,
+        arrival=date(2026, 12, 21),
+        departure=date(2026, 12, 24),
+        clock_booking_id="booking-b",
+    ).model_copy(update={"payload_hash": "booking-b-in"})
+    before_guest_a_checkout_boundary = datetime(2026, 12, 21, 8, 30, tzinfo=UTC)
+
+    apply_sync(
+        engine,
+        registry,
+        policy,
+        [guest_a_checked_out, guest_b_checked_in],
+        before_guest_a_checkout_boundary,
+    )
+
+    with Session(engine) as session:
+        latest_control_state = latest_outbox_payload(
+            session,
+            "hotel/v1/rooms/214/control/state",
+        )
+        latest_intent = latest_outbox_payload(session, "hotel/v1/rooms/214/intent/state")
+        latest_pms_state = latest_outbox_payload(session, "hotel/v1/rooms/214/pms/state")
+        latest_override = session.execute(
+            select(db.RoomPolicyOverride)
+            .where(db.RoomPolicyOverride.room_id == select_room_id(session, "214"))
+            .order_by(db.RoomPolicyOverride.starts_at.desc(), db.RoomPolicyOverride.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert latest_control_state["control_mode"] == ControlMode.AUTOMATIC.value
+    assert latest_control_state["active"] is False
+    assert latest_intent["automation_phase"] == AutomationPhase.OCCUPIED.value
+    assert latest_intent["control_mode"] == ControlMode.AUTOMATIC.value
+    assert latest_pms_state["clock_booking_id"] == "booking-b"
+    assert latest_override.control_mode == ControlMode.AUTOMATIC.value
+
+
 def test_until_checkout_command_requires_current_reservation(
     engine: Engine,
     registry: RoomRegistry,
@@ -490,7 +601,7 @@ def test_until_checkout_command_requires_current_reservation(
         service = RoomControlCommandService(
             session=session,
             room_registry=registry,
-            policy=policy.automation,
+            policy=policy,
         )
         service.apply_mqtt_command(
             room_key="214",
@@ -522,7 +633,7 @@ def test_invalid_home_assistant_command_is_audited_without_outbox(
         result = RoomControlCommandService(
             session=session,
             room_registry=registry,
-            policy=policy.automation,
+            policy=policy,
         ).apply_mqtt_command(
             room_key="214",
             field="duration",

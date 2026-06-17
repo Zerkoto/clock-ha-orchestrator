@@ -134,7 +134,8 @@ slice:
     bookings and audit rows.
 18. Field-specific Home Assistant command discovery topics, DB-backed command
     consumer, retained `control/state` publication, natural manual override
-    expiry/return-to-automatic handling and valid Sections dashboard generation.
+    expiry/return-to-automatic handling, booking-bound `until_checkout`
+    overrides and valid Sections dashboard generation.
 19. Dockerfile, Docker Compose and hardened Mosquitto examples.
 20. Documentation under `docs/`.
 21. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
@@ -202,15 +203,15 @@ Commands:
 .\.venv\Scripts\python.exe -m mypy app
 ```
 
-Result after the runtime and command-lifecycle continuation on
+Result after the `until_checkout` booking-boundary fix on
 `codex/add-db-sync-outbox`:
 
 ```text
-pytest: 47 passed
+pytest: 48 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
 mypy: Success, no issues found in 36 source files
-alembic heads: 20260617_0003 (head)
+alembic heads: 20260618_0004 (head)
 ```
 
 Docker was not run locally because Docker is not available in the shell PATH.
@@ -364,6 +365,9 @@ Important invariants:
 5. Hotel policy and "today" counters are evaluated in Europe/Sofia.
 6. Semantic duplicate updates should not create duplicate domain events.
 7. Overlapping active bookings assigned to one physical room generate a conflict.
+8. `until_checkout` manual overrides are bound to the booking row and exact
+   checkout boundary captured when the command is accepted; they must not carry
+   over to the next occupant of the same room.
 
 ## Current Gaps And Next Useful Slice
 

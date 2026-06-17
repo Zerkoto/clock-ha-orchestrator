@@ -88,10 +88,12 @@ commands.
 
 `until_checkout` is accepted only when the latest evaluated room state has a
 current assigned reservation and is not already checkout-due, conflicting,
-unknown or vacant. When a timed or until-checkout override naturally ends during
-policy evaluation, the orchestrator writes a system-generated automatic override
-row and publishes default retained `control/state` so Home Assistant controls do
-not remain stale.
+unknown or vacant. The accepted override is bound to that booking and stores its
+exact checkout boundary at command time; it must not be re-evaluated against a
+later occupant of the same room. When a timed or until-checkout override
+naturally ends during policy evaluation, the orchestrator writes a
+system-generated automatic override row and publishes default retained
+`control/state` so Home Assistant controls do not remain stale.
 
 `control/state` is retained and has no guest PII:
 

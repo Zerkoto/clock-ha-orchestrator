@@ -248,7 +248,7 @@ class AppRuntime:
                 result = RoomControlCommandService(
                     session=session,
                     room_registry=self.registry,
-                    policy=self.policy.automation,
+                    policy=self.policy,
                     topics=self.topics,
                 ).apply_mqtt_command(
                     room_key=room_key,
@@ -305,7 +305,7 @@ class AppRuntime:
             service = RoomControlCommandService(
                 session=session,
                 room_registry=self.registry,
-                policy=self.policy.automation,
+                policy=self.policy,
                 topics=self.topics,
             )
             payloads = [

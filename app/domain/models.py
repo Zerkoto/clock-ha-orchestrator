@@ -139,18 +139,28 @@ class HotelPolicy(BaseModel):
 
 class ManualOverride(BaseModel):
     control_mode: ControlMode
+    clock_booking_id: str | None = None
     hvac_mode: ManualHvacMode = ManualHvacMode.OFF
     target_temperature_c: float | None = None
     water_heater_enabled: bool | None = None
     expires_at: datetime | None = None
+    checkout_at: datetime | None = None
     until_checkout: bool = False
     command_id: UUID = Field(default_factory=uuid4)
 
-    def is_active(self, now: datetime, checkout_at: datetime | None = None) -> bool:
+    def is_active(
+        self,
+        now: datetime,
+        clock_booking_id: str | None = None,
+    ) -> bool:
         if self.control_mode == ControlMode.AUTOMATIC:
             return False
-        if self.until_checkout and checkout_at is not None:
-            return now < checkout_at
+        if self.until_checkout:
+            if self.clock_booking_id is not None and self.clock_booking_id != clock_booking_id:
+                return False
+            if self.checkout_at is None:
+                return False
+            return now < self.checkout_at
         if self.expires_at is None:
             return False
         return now < self.expires_at

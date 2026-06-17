@@ -131,6 +131,7 @@ class RoomPolicyOverride(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("rooms.id"))
+    booking_id: Mapped[UUID | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
     command_id: Mapped[UUID] = mapped_column(unique=True)
     control_mode: Mapped[str] = mapped_column(String(80))
     hvac_mode: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -138,6 +139,7 @@ class RoomPolicyOverride(Base):
     water_heater_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checkout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     until_checkout: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
 

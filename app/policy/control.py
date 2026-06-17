@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain.enums import AutomationPhase, ControlMode, ManualHvacMode
-from app.domain.models import AutomationPolicy, ManualOverride, Room, RoomRegistry
+from app.domain.models import AutomationPolicy, HotelPolicy, ManualOverride, Room, RoomRegistry
 from app.mqtt.topics import MqttTopics
 from app.persistence import models as db
 
@@ -37,18 +37,25 @@ class OverrideDraft:
     duration: DurationOption
 
 
+@dataclass(frozen=True)
+class BookingBoundary:
+    booking_id: UUID
+    checkout_at: datetime
+
+
 class RoomControlCommandService:
     def __init__(
         self,
         *,
         session: Session,
         room_registry: RoomRegistry,
-        policy: AutomationPolicy,
+        policy: HotelPolicy,
         topics: MqttTopics | None = None,
     ) -> None:
         self._session = session
         self._room_registry = room_registry
-        self._policy = policy
+        self._hotel_policy = policy
+        self._policy = policy.automation
         self._topics = topics or MqttTopics()
 
     def apply_mqtt_command(
@@ -253,20 +260,19 @@ class RoomControlCommandService:
         else:
             raise ValueError(f"unsupported control field: {field}")
 
-        if duration == "until_checkout" and not _room_has_checkout_boundary(
-            self._session,
-            room_row.id,
-            now,
-        ):
-            raise ValueError("until_checkout requires a current assigned reservation")
-
         expires_at, until_checkout = _expiry_for_duration(duration, now)
+        boundary: BookingBoundary | None = None
         if control_mode == ControlMode.AUTOMATIC:
             expires_at = None
             until_checkout = False
+        elif until_checkout:
+            boundary = self._current_booking_boundary(room_row.id, now)
+            if boundary is None:
+                raise ValueError("until_checkout requires a current assigned reservation")
 
         return db.RoomPolicyOverride(
             room_id=room_row.id,
+            booking_id=boundary.booking_id if boundary is not None else None,
             command_id=uuid4(),
             control_mode=control_mode.value,
             hvac_mode=hvac_mode.value,
@@ -278,6 +284,7 @@ class RoomControlCommandService:
             water_heater_enabled=water_heater_enabled,
             starts_at=now,
             expires_at=expires_at,
+            checkout_at=boundary.checkout_at if boundary is not None else None,
             until_checkout=until_checkout,
             created_by=COMMAND_SOURCE,
         )
@@ -340,6 +347,34 @@ class RoomControlCommandService:
             room_row.enabled = room.enabled
         return room_row
 
+    def _current_booking_boundary(
+        self,
+        room_id: UUID,
+        now: datetime,
+    ) -> BookingBoundary | None:
+        latest_state = latest_room_state(self._session, room_id)
+        if latest_state is None or latest_state.booking_id is None:
+            return None
+        if latest_state.automation_phase not in {
+            AutomationPhase.MANUAL_OVERRIDE.value,
+            AutomationPhase.OCCUPIED.value,
+            AutomationPhase.PRE_ARRIVAL.value,
+            AutomationPhase.RESERVED.value,
+        }:
+            return None
+        booking = self._session.get(db.Booking, latest_state.booking_id)
+        if booking is None:
+            return None
+        checkout_at = datetime.combine(
+            booking.departure_date,
+            self._hotel_policy.property.default_check_out_time,
+            tzinfo=self._hotel_policy.property.tzinfo,
+        )
+        checkout_at = _to_utc(checkout_at)
+        if checkout_at <= _to_utc(now):
+            return None
+        return BookingBoundary(booking_id=booking.id, checkout_at=checkout_at)
+
     def _audit_rejected(
         self,
         *,
@@ -392,7 +427,9 @@ def override_row_is_active(row: db.RoomPolicyOverride, now: datetime) -> bool:
     if row.control_mode == ControlMode.AUTOMATIC.value:
         return False
     if row.until_checkout:
-        return True
+        if row.booking_id is None or row.checkout_at is None:
+            return False
+        return _to_utc(row.checkout_at) > _to_utc(now)
     if row.expires_at is None:
         return False
     return _to_utc(row.expires_at) > _to_utc(now)
@@ -427,7 +464,8 @@ def control_state_payload_from_override(
     is_active = override_row_is_active(row, now) if active is None else active
     if not is_active:
         return default_control_state_payload(room_key=room_key, now=now)
-    expires_at = _to_utc(row.expires_at).isoformat() if row.expires_at else None
+    expires_at_source = row.expires_at or row.checkout_at
+    expires_at = _to_utc(expires_at_source).isoformat() if expires_at_source else None
     return {
         "schema_version": 1,
         "room_key": room_key,
@@ -454,32 +492,24 @@ def default_override_draft() -> OverrideDraft:
     )
 
 
-def manual_override_from_row(row: db.RoomPolicyOverride) -> ManualOverride | None:
+def manual_override_from_row(
+    row: db.RoomPolicyOverride,
+    *,
+    clock_booking_id: str | None = None,
+) -> ManualOverride | None:
     if row.control_mode == ControlMode.AUTOMATIC.value:
         return None
     return ManualOverride(
         control_mode=ControlMode(row.control_mode),
+        clock_booking_id=clock_booking_id,
         hvac_mode=ManualHvacMode(row.hvac_mode or ManualHvacMode.OFF.value),
         target_temperature_c=row.target_temperature_c,
         water_heater_enabled=row.water_heater_enabled,
         expires_at=_optional_to_utc(row.expires_at),
+        checkout_at=_optional_to_utc(row.checkout_at),
         until_checkout=row.until_checkout,
         command_id=row.command_id,
     )
-
-
-def _room_has_checkout_boundary(session: Session, room_id: UUID, now: datetime) -> bool:
-    latest_state = latest_room_state(session, room_id)
-    if latest_state is None or latest_state.booking_id is None:
-        return False
-    if latest_state.expires_at is not None and _to_utc(latest_state.expires_at) <= _to_utc(now):
-        return False
-    return latest_state.automation_phase in {
-        AutomationPhase.MANUAL_OVERRIDE.value,
-        AutomationPhase.OCCUPIED.value,
-        AutomationPhase.PRE_ARRIVAL.value,
-        AutomationPhase.RESERVED.value,
-    }
 
 
 def _payload_text(payload: bytes) -> str:
