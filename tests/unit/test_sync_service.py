@@ -3,8 +3,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.clock.interface import ClockPage
+from app.clock.interface import ClockMappingRequired, ClockPage
 from app.clock.normalizer import ClockFieldMapping
+from app.clock.rest import ClockRestClient
 from app.clock.sync import ClockSyncService, SyncCursorState, incremental_window_start
 from app.settings import Settings
 
@@ -94,3 +95,19 @@ async def test_failed_poll_does_not_advance_cursor() -> None:
 
     assert result.success is False
     assert result.next_cursor == cursor
+
+
+@pytest.mark.asyncio
+async def test_live_rest_adapter_stays_disabled_without_verified_contract() -> None:
+    settings = Settings(
+        app_env="test",
+        clock_bookings_endpoint_path="/unverified",
+        clock_rooms_endpoint_path="/unverified",
+        clock_endpoint_doc_reference="unverified",
+    )
+    client = ClockRestClient(settings)
+
+    with pytest.raises(ClockMappingRequired, match="verified ClockApiContract"):
+        await client.list_bookings(
+            updated_since=datetime(2026, 6, 17, tzinfo=ZoneInfo("UTC")),
+        )

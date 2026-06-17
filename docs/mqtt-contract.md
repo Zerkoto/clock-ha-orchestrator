@@ -11,7 +11,13 @@ hotel/v1/system/clock-ha-orchestrator/availability
 hotel/v1/system/clock-ha-orchestrator/state
 hotel/v1/rooms/{room_key}/pms/state
 hotel/v1/rooms/{room_key}/intent/state
-hotel/v1/rooms/{room_key}/control/set
+hotel/v1/rooms/{room_key}/control/state
+hotel/v1/rooms/{room_key}/control/mode/set
+hotel/v1/rooms/{room_key}/control/hvac-mode/set
+hotel/v1/rooms/{room_key}/control/temperature/set
+hotel/v1/rooms/{room_key}/control/duration/set
+hotel/v1/rooms/{room_key}/control/water-heater/set
+hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 hotel/v1/rooms/{room_key}/reported/state
 ```
 
@@ -48,11 +54,22 @@ The desired intent payload is hardware-neutral and must not imply equipment exec
 
 ## Commands
 
-Reception commands are accepted only on:
+Reception commands are accepted only on field-specific control topics:
 
 ```text
-hotel/v1/rooms/{room_key}/control/set
+hotel/v1/rooms/{room_key}/control/mode/set
+hotel/v1/rooms/{room_key}/control/hvac-mode/set
+hotel/v1/rooms/{room_key}/control/temperature/set
+hotel/v1/rooms/{room_key}/control/duration/set
+hotel/v1/rooms/{room_key}/control/water-heater/set
+hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 ```
 
-Every command must include a UUID. The orchestrator validates, audits and persists accepted and rejected commands. Home Assistant must never publish directly to future hardware topics.
+The orchestrator generates command UUIDs server-side, validates and audits
+accepted/rejected commands, and publishes authoritative control state to:
 
+```text
+hotel/v1/rooms/{room_key}/control/state
+```
+
+Home Assistant must never publish directly to future hardware topics.

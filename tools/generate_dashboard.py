@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import yaml
 
-from app.config_loader import load_room_registry
-from app.dashboard.generator import generate_dashboard
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.config_loader import load_room_registry  # noqa: E402
+from app.dashboard.generator import generate_dashboard  # noqa: E402
 
 
 def main() -> None:

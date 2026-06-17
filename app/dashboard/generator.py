@@ -26,10 +26,9 @@ def generate_dashboard(registry: RoomRegistry) -> dict[str, Any]:
 
 
 def _overview_view() -> dict[str, Any]:
-    return {
-        "title": "Overview",
-        "type": "sections",
-        "cards": [
+    return _sections_view(
+        "Overview",
+        [
             {
                 "type": "heading",
                 "heading": "Clock Integration",
@@ -53,14 +52,13 @@ def _overview_view() -> dict[str, Any]:
                 "card": {"type": "tile", "entity": "sensor.hotel_room_conflicts", "color": "red"},
             },
         ],
-    }
+    )
 
 
 def _arrivals_view() -> dict[str, Any]:
-    return {
-        "title": "Arrivals",
-        "type": "sections",
-        "cards": [
+    return _sections_view(
+        "Arrivals",
+        [
             {"type": "heading", "heading": "Today"},
             {
                 "type": "entities",
@@ -70,25 +68,23 @@ def _arrivals_view() -> dict[str, Any]:
                 ],
             },
         ],
-    }
+    )
 
 
 def _departures_view() -> dict[str, Any]:
-    return {
-        "title": "Departures",
-        "type": "sections",
-        "cards": [
+    return _sections_view(
+        "Departures",
+        [
             {"type": "heading", "heading": "Today"},
             {"type": "entities", "entities": ["sensor.hotel_departures_today"]},
         ],
-    }
+    )
 
 
 def _alerts_view() -> dict[str, Any]:
-    return {
-        "title": "Alerts",
-        "type": "sections",
-        "cards": [
+    return _sections_view(
+        "Alerts",
+        [
             {"type": "heading", "heading": "Needs Attention"},
             {
                 "type": "entities",
@@ -99,14 +95,13 @@ def _alerts_view() -> dict[str, Any]:
                 ],
             },
         ],
-    }
+    )
 
 
 def _integration_view() -> dict[str, Any]:
-    return {
-        "title": "Integration",
-        "type": "sections",
-        "cards": [
+    return _sections_view(
+        "Integration",
+        [
             {"type": "heading", "heading": "Orchestrator"},
             {
                 "type": "entities",
@@ -117,18 +112,14 @@ def _integration_view() -> dict[str, Any]:
                 ],
             },
         ],
-    }
+    )
 
 
 def _floor_view(floor: str, room_keys: list[str]) -> dict[str, Any]:
     cards: list[dict[str, Any]] = [{"type": "heading", "heading": f"Floor {floor}"}]
     for room_key in room_keys:
         cards.append(_room_card(room_key))
-    return {
-        "title": f"Floor {floor}",
-        "type": "sections",
-        "cards": cards,
-    }
+    return _sections_view(f"Floor {floor}", cards)
 
 
 def _room_card(room_key: str) -> dict[str, Any]:
@@ -149,6 +140,20 @@ def _room_card(room_key: str) -> dict[str, Any]:
             f"number.{prefix}_manual_temperature",
             f"select.{prefix}_override_duration",
             f"switch.{prefix}_manual_water_heater",
+            f"button.{prefix}_return_to_automatic",
             f"binary_sensor.{prefix}_needs_attention",
+        ],
+    }
+
+
+def _sections_view(title: str, cards: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "title": title,
+        "type": "sections",
+        "sections": [
+            {
+                "type": "grid",
+                "cards": cards,
+            }
         ],
     }

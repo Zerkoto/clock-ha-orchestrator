@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.clock.db_sync import ClockDbSyncService
 from app.clock.sync import SyncCursorState, SyncRunResult
-from app.domain.enums import AutomationPhase, ControlMode
+from app.domain.enums import AutomationPhase, ControlMode, ManualHvacMode
 from app.domain.models import PropertyRegistry, Room, RoomRegistry
 from app.persistence import models as db
 from tests.conftest import booking
@@ -71,6 +71,8 @@ def test_db_sync_upserts_booking_assignment_state_and_outbox(
             "hotel/v1/rooms/214/intent/state",
         }
         payloads = [event.payload for event in session.execute(select(db.OutboxEvent)).scalars()]
+        intent_payload = next(payload for payload in payloads if "intent_version" in payload)
+        assert intent_payload["intent_version"] == 1
         encoded = json.dumps(payloads, sort_keys=True)
         assert "guest" not in encoded.lower()
         assert "email" not in encoded.lower()
@@ -102,7 +104,7 @@ def test_room_moves_recalculate_old_and_new_rooms_and_keep_assignment_history(
     move_to_215 = booking(room_id="clock-room-215", room_number="215")
     result = apply_sync(engine, registry, policy, [move_to_215], LATER)
     move_back_to_214 = booking()
-    apply_sync(engine, registry, policy, [move_back_to_214], LATER)
+    apply_sync(engine, registry, policy, [move_back_to_214], LATER + timedelta(minutes=1))
 
     assert result.affected_room_keys == ("214", "215")
     assert result.room_states_created == 2
@@ -116,6 +118,48 @@ def test_room_moves_recalculate_old_and_new_rooms_and_keep_assignment_history(
         assert current[0].physical_room_number == "214"
         assert count_rows(session, db.RoomState) == 5
         assert count_rows(session, db.OutboxEvent) == 10
+        intent_versions = [
+            event.payload["intent_version"]
+            for event in session.execute(
+                select(db.OutboxEvent)
+                .where(db.OutboxEvent.topic == "hotel/v1/rooms/214/intent/state")
+                .order_by(db.OutboxEvent.created_at, db.OutboxEvent.id)
+            ).scalars()
+        ]
+        assert intent_versions == [1, 2, 3]
+
+
+def test_policy_tick_moves_reserved_room_to_pre_arrival_without_clock_delta(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    future = booking(arrival=date(2026, 12, 21), departure=date(2026, 12, 24))
+    apply_sync(engine, registry, policy, [future], NOW)
+
+    policy_tick_at = datetime(2026, 12, 21, 10, 30, tzinfo=UTC)
+    with Session(engine) as session:
+        service = ClockDbSyncService(session=session, room_registry=registry, policy=policy)
+        result = service.evaluate_all_rooms(now=policy_tick_at, correlation_id=CORRELATION_ID)
+
+    assert result.affected_room_keys == ("214", "215")
+    assert result.room_states_created == 2
+    assert result.outbox_events_created == 4
+
+    with Session(engine) as session:
+        room_214_id = session.execute(select(db.Room.id).where(db.Room.key == "214")).scalar_one()
+        states = list(
+            session.execute(
+                select(db.RoomState)
+                .where(db.RoomState.room_id == room_214_id)
+                .order_by(db.RoomState.created_at, db.RoomState.id)
+            ).scalars()
+        )
+        assert [state.automation_phase for state in states] == [
+            AutomationPhase.RESERVED.value,
+            AutomationPhase.PRE_ARRIVAL.value,
+        ]
+        assert [state.intent_version for state in states] == [1, 2]
 
 
 def test_assignment_removal_recalculates_old_room_without_unassigned_intent(
@@ -163,6 +207,50 @@ def test_overlapping_active_bookings_create_conflict_intent(
         assert intent.payload["automation_phase"] == AutomationPhase.CONFLICT.value
         assert intent.payload["control_mode"] == ControlMode.OFF.value
         assert intent.payload["hvac"]["enabled"] is False
+
+
+def test_policy_tick_loads_active_manual_override(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    apply_sync(engine, registry, policy, [booking()], NOW)
+    with Session(engine) as session, session.begin():
+        room_id = session.execute(select(db.Room.id).where(db.Room.key == "214")).scalar_one()
+        session.add(
+            db.RoomPolicyOverride(
+                room_id=room_id,
+                command_id=UUID("00000000-0000-0000-0000-000000000333"),
+                control_mode=ControlMode.MANUAL.value,
+                hvac_mode=ManualHvacMode.COOL.value,
+                target_temperature_c=20,
+                water_heater_enabled=False,
+                starts_at=NOW,
+                expires_at=NOW + timedelta(hours=1),
+                until_checkout=False,
+                created_by="test",
+            )
+        )
+
+    with Session(engine) as session:
+        service = ClockDbSyncService(session=session, room_registry=registry, policy=policy)
+        result = service.evaluate_all_rooms(
+            now=NOW + timedelta(minutes=1),
+            correlation_id=CORRELATION_ID,
+        )
+
+    assert "214" in result.affected_room_keys
+
+    with Session(engine) as session:
+        latest_intent = session.execute(
+            select(db.OutboxEvent)
+            .where(db.OutboxEvent.topic == "hotel/v1/rooms/214/intent/state")
+            .order_by(db.OutboxEvent.created_at.desc(), db.OutboxEvent.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert latest_intent.payload["automation_phase"] == AutomationPhase.MANUAL_OVERRIDE.value
+        assert latest_intent.payload["control_mode"] == ControlMode.MANUAL.value
+        assert latest_intent.payload["hvac"]["mode"] == ManualHvacMode.COOL.value
 
 
 def test_failed_sync_run_does_not_advance_cursor(

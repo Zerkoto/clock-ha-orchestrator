@@ -11,10 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clock.sync import SyncCursorState, SyncRunResult
-from app.domain.enums import AttentionReason, BookingStatus
+from app.domain.enums import AttentionReason, BookingStatus, ControlMode, ManualHvacMode
 from app.domain.models import (
     DesiredRoomIntent,
     HotelPolicy,
+    ManualOverride,
     NormalizedBooking,
     Room,
     RoomRegistry,
@@ -190,6 +191,32 @@ class ClockDbSyncService:
             last_success_at=cursor.last_success_at,
             cursor_value=cursor.cursor_value,
         )
+
+    def evaluate_all_rooms(
+        self,
+        *,
+        now: datetime,
+        correlation_id: UUID | None = None,
+    ) -> PersistedSyncResult:
+        correlation_id = correlation_id or uuid4()
+        now_utc = _to_utc(now)
+        with self._session.begin():
+            registry = self._ensure_registry()
+            recalculation = self._recalculate_rooms(
+                registry,
+                set(registry.domain_rooms_by_id),
+                observed_at=now_utc,
+                correlation_id=correlation_id,
+            )
+            return PersistedSyncResult(
+                sync_run_id=uuid4(),
+                success=True,
+                processed_bookings=0,
+                affected_room_keys=tuple(sorted(recalculation.affected_room_keys)),
+                room_states_created=recalculation.room_states_created,
+                outbox_events_created=recalculation.outbox_events_created,
+                audit_events_created=recalculation.audit_events_created,
+            )
 
     def _ensure_registry(self) -> RegistryRows:
         property_row = self._session.execute(
@@ -513,11 +540,19 @@ class ClockDbSyncService:
             room_row = self._session.get(db.Room, room_id)
             if room is None or room_row is None:
                 continue
-            state = evaluate_room(room, loaded.bookings, hotel_now, self._policy)
+            override = self._active_override(room_id, hotel_now)
+            state = evaluate_room(
+                room,
+                loaded.bookings,
+                hotel_now,
+                self._policy,
+                override,
+            )
             intent = derive_room_intent(
                 state,
                 self._policy,
                 hotel_now,
+                override,
                 correlation_id=correlation_id,
             )
             pms_payload = _pms_state_payload(state, correlation_id=correlation_id)
@@ -525,6 +560,11 @@ class ClockDbSyncService:
             latest_state = self._latest_room_state(room_id)
             if latest_state is not None and latest_state.payload_hash == semantic_hash:
                 continue
+
+            if intent is not None:
+                intent = intent.model_copy(
+                    update={"intent_version": _next_intent_version(latest_state)}
+                )
 
             booking_id = (
                 loaded.ids_by_clock_booking_id.get(state.booking.clock_booking_id)
@@ -553,6 +593,7 @@ class ClockDbSyncService:
                     retain=True,
                     status="pending",
                     attempts=0,
+                    next_attempt_at=observed_at,
                     created_at=observed_at,
                     correlation_id=correlation_id,
                 )
@@ -567,6 +608,7 @@ class ClockDbSyncService:
                         retain=True,
                         status="pending",
                         attempts=0,
+                        next_attempt_at=observed_at,
                         created_at=observed_at,
                         correlation_id=correlation_id,
                     )
@@ -607,6 +649,32 @@ class ClockDbSyncService:
             .order_by(db.RoomState.created_at.desc(), db.RoomState.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+
+    def _active_override(self, room_id: UUID, now: datetime) -> ManualOverride | None:
+        row = self._session.execute(
+            select(db.RoomPolicyOverride)
+            .where(
+                db.RoomPolicyOverride.room_id == room_id,
+                db.RoomPolicyOverride.control_mode != ControlMode.AUTOMATIC.value,
+                (
+                    db.RoomPolicyOverride.until_checkout.is_(True)
+                    | (db.RoomPolicyOverride.expires_at > _to_utc(now))
+                ),
+            )
+            .order_by(db.RoomPolicyOverride.starts_at.desc(), db.RoomPolicyOverride.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return ManualOverride(
+            control_mode=ControlMode(row.control_mode),
+            hvac_mode=ManualHvacMode(row.hvac_mode or ManualHvacMode.OFF.value),
+            target_temperature_c=row.target_temperature_c,
+            water_heater_enabled=row.water_heater_enabled,
+            expires_at=_optional_to_utc(row.expires_at),
+            until_checkout=row.until_checkout,
+            command_id=row.command_id,
+        )
 
     def _load_normalized_bookings(self, property_row: db.Property) -> LoadedBookings:
         booking_rows = self._session.execute(
@@ -769,6 +837,12 @@ def _room_state_hash(
             "intent": stable_intent,
         }
     )
+
+
+def _next_intent_version(latest_state: db.RoomState | None) -> int:
+    if latest_state is None:
+        return 1
+    return latest_state.intent_version + 1
 
 
 def _stable_hash(payload: dict[str, Any]) -> str:

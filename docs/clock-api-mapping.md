@@ -11,19 +11,21 @@
 
 ## Live Adapter Status
 
-The current code intentionally does not hard-code Clock booking or room endpoint paths, pagination keys or physical-room fields. Set these only after one of the following is available:
+The current code intentionally does not hard-code Clock booking or room endpoint paths, filter names, pagination query parameters, response envelope keys or physical-room fields. Live REST calls remain disabled unless a `ClockApiContract` is supplied in code from verified evidence. Set these only after one of the following is available:
 
 - A direct official Postman endpoint reference for the relevant PMS API route.
 - A sanitized sandbox payload committed under `tests/fixtures/clock/`.
 - A documented field mapping reviewed in this file.
 
-Required environment variables for enabling live adapter behavior:
+Legacy environment placeholders are not sufficient to enable live adapter behavior:
 
 ```text
 CLOCK_BOOKINGS_ENDPOINT_PATH=
 CLOCK_ROOMS_ENDPOINT_PATH=
 CLOCK_ENDPOINT_DOC_REFERENCE=
 ```
+
+Populating those values alone must not enable live Clock calls.
 
 ## Required Normalized Fields
 
@@ -62,4 +64,3 @@ Do not store guest email, phone, address, notes, identity-document data, payment
 - Physical room identifier and physical room number fields on booking payloads.
 - Room inventory endpoint and stable room ID field.
 - Confirmed first-level fields suitable for `updated_at.gteq` filtering.
-

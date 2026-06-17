@@ -2,128 +2,145 @@ title: Local Stay Hotel & Suites Reception
 views:
 - title: Overview
   type: sections
-  cards:
-  - type: heading
-    heading: Clock Integration
-    badges:
-    - type: entity
-      entity: binary_sensor.clock_ha_orchestrator_online
-    - type: entity
-      entity: sensor.clock_last_successful_sync
-    - type: entity
-      entity: sensor.clock_sync_lag
-  - type: tile
-    entity: sensor.hotel_checked_in_rooms
-    name: Checked In
-  - type: tile
-    entity: sensor.hotel_expected_rooms
-    name: Expected
-  - type: tile
-    entity: sensor.hotel_arrivals_today
-    name: Arrivals
-  - type: tile
-    entity: sensor.hotel_departures_today
-    name: Departures
-  - type: conditional
-    conditions:
-    - entity: sensor.hotel_room_conflicts
-      state_not: '0'
-    card:
-      type: tile
-      entity: sensor.hotel_room_conflicts
-      color: red
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Clock Integration
+      badges:
+      - type: entity
+        entity: binary_sensor.clock_ha_orchestrator_online
+      - type: entity
+        entity: sensor.clock_last_successful_sync
+      - type: entity
+        entity: sensor.clock_sync_lag
+    - type: tile
+      entity: sensor.hotel_checked_in_rooms
+      name: Checked In
+    - type: tile
+      entity: sensor.hotel_expected_rooms
+      name: Expected
+    - type: tile
+      entity: sensor.hotel_arrivals_today
+      name: Arrivals
+    - type: tile
+      entity: sensor.hotel_departures_today
+      name: Departures
+    - type: conditional
+      conditions:
+      - entity: sensor.hotel_room_conflicts
+        state_not: '0'
+      card:
+        type: tile
+        entity: sensor.hotel_room_conflicts
+        color: red
 - title: Arrivals
   type: sections
-  cards:
-  - type: heading
-    heading: Today
-  - type: entities
-    entities:
-    - sensor.hotel_arrivals_today
-    - sensor.hotel_unassigned_arrivals
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Today
+    - type: entities
+      entities:
+      - sensor.hotel_arrivals_today
+      - sensor.hotel_unassigned_arrivals
 - title: Departures
   type: sections
-  cards:
-  - type: heading
-    heading: Today
-  - type: entities
-    entities:
-    - sensor.hotel_departures_today
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Today
+    - type: entities
+      entities:
+      - sensor.hotel_departures_today
 - title: Alerts
   type: sections
-  cards:
-  - type: heading
-    heading: Needs Attention
-  - type: entities
-    entities:
-    - sensor.hotel_unassigned_arrivals
-    - sensor.hotel_room_conflicts
-    - sensor.clock_sync_lag
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Needs Attention
+    - type: entities
+      entities:
+      - sensor.hotel_unassigned_arrivals
+      - sensor.hotel_room_conflicts
+      - sensor.clock_sync_lag
 - title: Integration
   type: sections
-  cards:
-  - type: heading
-    heading: Orchestrator
-  - type: entities
-    entities:
-    - binary_sensor.clock_ha_orchestrator_online
-    - sensor.clock_last_successful_sync
-    - sensor.clock_sync_lag
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Orchestrator
+    - type: entities
+      entities:
+      - binary_sensor.clock_ha_orchestrator_online
+      - sensor.clock_last_successful_sync
+      - sensor.clock_sync_lag
 - title: Floor 1
   type: sections
-  cards:
-  - type: heading
-    heading: Floor 1
-  - type: entities
-    title: Room 101
-    entities:
-    - sensor.room_101_pms_status
-    - sensor.room_101_automation_phase
-    - sensor.room_101_arrival
-    - sensor.room_101_departure
-    - sensor.room_101_desired_hvac_mode
-    - sensor.room_101_desired_temperature
-    - sensor.room_101_desired_water_heater
-    - select.room_101_control_mode
-    - select.room_101_manual_hvac_mode
-    - number.room_101_manual_temperature
-    - select.room_101_override_duration
-    - switch.room_101_manual_water_heater
-    - binary_sensor.room_101_needs_attention
-  - type: entities
-    title: Room 102
-    entities:
-    - sensor.room_102_pms_status
-    - sensor.room_102_automation_phase
-    - sensor.room_102_arrival
-    - sensor.room_102_departure
-    - sensor.room_102_desired_hvac_mode
-    - sensor.room_102_desired_temperature
-    - sensor.room_102_desired_water_heater
-    - select.room_102_control_mode
-    - select.room_102_manual_hvac_mode
-    - number.room_102_manual_temperature
-    - select.room_102_override_duration
-    - switch.room_102_manual_water_heater
-    - binary_sensor.room_102_needs_attention
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Floor 1
+    - type: entities
+      title: Room 101
+      entities:
+      - sensor.room_101_pms_status
+      - sensor.room_101_automation_phase
+      - sensor.room_101_arrival
+      - sensor.room_101_departure
+      - sensor.room_101_desired_hvac_mode
+      - sensor.room_101_desired_temperature
+      - sensor.room_101_desired_water_heater
+      - select.room_101_control_mode
+      - select.room_101_manual_hvac_mode
+      - number.room_101_manual_temperature
+      - select.room_101_override_duration
+      - switch.room_101_manual_water_heater
+      - button.room_101_return_to_automatic
+      - binary_sensor.room_101_needs_attention
+    - type: entities
+      title: Room 102
+      entities:
+      - sensor.room_102_pms_status
+      - sensor.room_102_automation_phase
+      - sensor.room_102_arrival
+      - sensor.room_102_departure
+      - sensor.room_102_desired_hvac_mode
+      - sensor.room_102_desired_temperature
+      - sensor.room_102_desired_water_heater
+      - select.room_102_control_mode
+      - select.room_102_manual_hvac_mode
+      - number.room_102_manual_temperature
+      - select.room_102_override_duration
+      - switch.room_102_manual_water_heater
+      - button.room_102_return_to_automatic
+      - binary_sensor.room_102_needs_attention
 - title: Floor 2
   type: sections
-  cards:
-  - type: heading
-    heading: Floor 2
-  - type: entities
-    title: Room 214
-    entities:
-    - sensor.room_214_pms_status
-    - sensor.room_214_automation_phase
-    - sensor.room_214_arrival
-    - sensor.room_214_departure
-    - sensor.room_214_desired_hvac_mode
-    - sensor.room_214_desired_temperature
-    - sensor.room_214_desired_water_heater
-    - select.room_214_control_mode
-    - select.room_214_manual_hvac_mode
-    - number.room_214_manual_temperature
-    - select.room_214_override_duration
-    - switch.room_214_manual_water_heater
-    - binary_sensor.room_214_needs_attention
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Floor 2
+    - type: entities
+      title: Room 214
+      entities:
+      - sensor.room_214_pms_status
+      - sensor.room_214_automation_phase
+      - sensor.room_214_arrival
+      - sensor.room_214_departure
+      - sensor.room_214_desired_hvac_mode
+      - sensor.room_214_desired_temperature
+      - sensor.room_214_desired_water_heater
+      - select.room_214_control_mode
+      - select.room_214_manual_hvac_mode
+      - number.room_214_manual_temperature
+      - select.room_214_override_duration
+      - switch.room_214_manual_water_heater
+      - button.room_214_return_to_automatic
+      - binary_sensor.room_214_needs_attention

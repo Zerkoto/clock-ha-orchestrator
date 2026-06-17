@@ -126,13 +126,18 @@ slice:
 14. DB-backed Clock sync application service for normalized booking upsert,
     physical-room assignment history, affected-room state recalculation and
     transactional MQTT outbox event creation.
-15. Transactional outbox publisher helper.
-16. FastAPI shell endpoints.
-17. Dockerfile and Docker Compose.
-18. Example Mosquitto, Home Assistant, policy and room registry config.
-19. Documentation under `docs/`.
-20. GitHub Actions CI.
-21. Unit tests.
+15. FastAPI lifespan runtime shell with DB/migration readiness checks, fixture
+    Clock sync entrypoint, policy tick entrypoint, optional MQTT lifecycle,
+    Discovery publishing, system-state publishing and outbox worker loop.
+16. Transactional outbox publisher and DB claim/retry/dead-letter helpers.
+17. DB-backed FastAPI endpoints for sync status, reconciliation, rooms,
+    bookings and audit rows.
+18. Field-specific Home Assistant command discovery topics and valid Sections
+    dashboard generation.
+19. Dockerfile, Docker Compose and hardened Mosquitto examples.
+20. Documentation under `docs/`.
+21. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
+22. Unit tests.
 
 ## Important Files
 
@@ -155,6 +160,7 @@ homeassistant/configuration.example.yaml
 homeassistant/dashboards/hotel-reception.yaml
 app/settings.py
 app/main.py
+app/runtime.py
 app/api/routes.py
 app/clock/interface.py
 app/clock/rest.py
@@ -167,10 +173,12 @@ app/domain/state_machine.py
 app/policy/engine.py
 app/policy/commands.py
 app/mqtt/topics.py
+app/mqtt/client.py
 app/mqtt/discovery.py
 app/outbox/service.py
 app/persistence/models.py
-migrations/versions/20260617_0001_initial.py
+app/system/state.py
+migrations/versions/
 tools/generate_dashboard.py
 tests/
 ```
@@ -192,17 +200,18 @@ Commands:
 .\.venv\Scripts\python.exe -m mypy app
 ```
 
-Result after `codex/add-db-sync-outbox`:
+Result after the runtime continuation on `codex/add-db-sync-outbox`:
 
 ```text
-pytest: 30 passed
+pytest: 37 passed
 ruff: All checks passed
-ruff format --check: 43 files already formatted
-mypy: Success, no issues found in 31 source files
+ruff format --check: 49 files already formatted
+mypy: Success, no issues found in 35 source files
+alembic heads: 20260617_0003 (head)
 ```
 
-Docker was not run during the initial scaffold because Docker was not available
-in the shell PATH.
+Docker was not run locally because Docker is not available in the shell PATH.
+CI now includes `docker build .`.
 
 ## Git And Publishing State
 
@@ -349,28 +358,29 @@ Important invariants:
 
 ## Current Gaps And Next Useful Slice
 
-The most useful next production slice is DB-backed synchronization and outbox
-creation:
+The most useful next production slice is completing command/runtime integration
+and adding real PostgreSQL/Docker verification:
 
-1. Wire the DB-backed Clock sync application service into the scheduler/API
-   execution path.
-2. Add real PostgreSQL integration tests around transaction rollback,
-   concurrent sync attempts and migration application.
-3. Add sanitized Clock sandbox fixtures and contract tests once physical-room
-   fields and pagination are confirmed.
+1. Implement the MQTT command consumer and command-processing service for the
+   field-specific Home Assistant control topics.
+2. Publish authoritative `control/state` after accepted/rejected commands and
+   add tests for command parsing, audit rows, override expiry and return to
+   automatic mode.
+3. Add real PostgreSQL integration tests around migration application,
+   transaction rollback, concurrent sync attempts and concurrent outbox claims.
+4. Add sanitized Clock sandbox fixtures and contract tests once physical-room
+   fields, filters and pagination are confirmed.
 
 Other important next work:
 
-1. Wire API routes to persistence instead of shell responses.
-2. Implement actual MQTT client lifecycle, reconnect/backoff, LWT and HA
-   birth-topic discovery republish.
-3. Add DB-backed Home Assistant aggregate system state.
-4. Add authentication/network restrictions for administrative endpoints.
-5. Harden Mosquitto config. It currently allows anonymous access for local
-   development only.
-6. Run Docker Compose once Docker is available.
-7. Add sanitized Clock sandbox fixtures and contract tests.
-8. Expand end-to-end tests for unassigned booking -> assigned room ->
+1. Add HA birth-topic discovery republish and stale discovery cleanup for
+   permanently removed rooms.
+2. Add a documented/authenticated dead-letter retry endpoint or management
+   command.
+3. Run Docker Compose once Docker is available and real Mosquitto password/ACL
+   files have been generated.
+4. Add sanitized Clock sandbox fixtures and contract tests.
+5. Expand end-to-end tests for unassigned booking -> assigned room ->
    pre-arrival -> check-in -> manual override -> room move -> checkout.
 
 ## Commands For Future Agents
@@ -401,6 +411,8 @@ Docker, when available:
 
 ```powershell
 copy .env.example .env
+# edit .env secrets, then generate mosquitto/config/passwords and
+# mosquitto/config/acl from the examples before starting Mosquitto
 docker compose up --build
 ```
 

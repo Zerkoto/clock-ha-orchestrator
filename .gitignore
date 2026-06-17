@@ -15,5 +15,6 @@ data/
 logs/
 homeassistant/.storage/
 mosquitto/data/
+mosquitto/config/passwords
+mosquitto/config/acl
 postgres-data/
-

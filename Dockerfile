@@ -7,10 +7,14 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY config ./config
+COPY tools ./tools
+COPY homeassistant ./homeassistant
 
 RUN pip install --no-cache-dir .
 
 USER 10001
 
-CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"]
