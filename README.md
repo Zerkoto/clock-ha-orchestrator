@@ -62,6 +62,11 @@ rejected manual override commands, publishes retained `control/state`, and
 reevaluates the affected room through the same transactional outbox path as
 Clock sync.
 
+Timed and until-checkout manual overrides naturally return to automatic during
+policy evaluation and publish default retained `control/state`. The generated
+Reception dashboard surfaces arrivals, departures, active manual overrides,
+rooms needing attention, runtime readiness, MQTT connection and outbox health.
+
 Generate the Home Assistant dashboard with:
 
 ```powershell

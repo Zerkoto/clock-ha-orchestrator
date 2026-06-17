@@ -47,6 +47,12 @@ server-side command IDs, audits accepted and rejected commands, and publishes
 retained `control/state`. Use the dashboard controls; do not publish directly
 to future hardware adapter topics.
 
+Keep the policy scheduler enabled in production. It is responsible for natural
+time transitions, including manual override expiry and until-checkout return to
+automatic mode. The generated dashboard exposes runtime-ready, MQTT-connected,
+policy-scheduler and outbox-worker monitors so disabled workers are visible to
+Reception.
+
 ## Mosquitto
 
 Anonymous access is disabled. Create a local password file and ACL file before

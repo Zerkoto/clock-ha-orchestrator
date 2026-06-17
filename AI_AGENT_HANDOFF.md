@@ -1,6 +1,6 @@
 # AI Agent Handoff For Clock HA Orchestrator
 
-Updated: 2026-06-17
+Updated: 2026-06-18
 
 Give this file to future AI agents before asking them to work on Clock PMS+,
 Home Assistant, MQTT, hotel automation, database persistence, Docker, or
@@ -133,8 +133,8 @@ slice:
 17. DB-backed FastAPI endpoints for sync status, reconciliation, rooms,
     bookings and audit rows.
 18. Field-specific Home Assistant command discovery topics, DB-backed command
-    consumer, retained `control/state` publication and valid Sections dashboard
-    generation.
+    consumer, retained `control/state` publication, natural manual override
+    expiry/return-to-automatic handling and valid Sections dashboard generation.
 19. Dockerfile, Docker Compose and hardened Mosquitto examples.
 20. Documentation under `docs/`.
 21. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
@@ -187,7 +187,7 @@ tests/
 
 ## Current Validation State
 
-Validation last run successfully on 2026-06-17 from:
+Validation last run successfully on 2026-06-18 from:
 
 ```text
 C:\Users\zerko\Documents\GIT\clock-ha-orchestrator
@@ -206,7 +206,7 @@ Result after the runtime and command-lifecycle continuation on
 `codex/add-db-sync-outbox`:
 
 ```text
-pytest: 42 passed
+pytest: 47 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
 mypy: Success, no issues found in 36 source files

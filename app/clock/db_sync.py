@@ -11,7 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clock.sync import SyncCursorState, SyncRunResult
-from app.domain.enums import AttentionReason, BookingStatus
+from app.domain.enums import (
+    AttentionReason,
+    AutomationPhase,
+    BookingStatus,
+    ControlMode,
+    ManualHvacMode,
+)
 from app.domain.models import (
     DesiredRoomIntent,
     HotelPolicy,
@@ -24,7 +30,12 @@ from app.domain.models import (
 from app.domain.state_machine import evaluate_room, evaluate_unassigned_booking
 from app.mqtt.topics import MqttTopics
 from app.persistence import models as db
-from app.policy.control import latest_override_row, manual_override_from_row, override_row_is_active
+from app.policy.control import (
+    default_control_state_payload,
+    latest_override_row,
+    manual_override_from_row,
+    override_row_is_active,
+)
 from app.policy.engine import derive_room_intent
 
 CLOCK_BOOKINGS_CURSOR_SOURCE = "clock_bookings"
@@ -571,7 +582,8 @@ class ClockDbSyncService:
             room_row = self._session.get(db.Room, room_id)
             if room is None or room_row is None:
                 continue
-            override = self._active_override(room_id, hotel_now)
+            latest_override = latest_override_row(self._session, room_id)
+            override = self._active_override_from_row(latest_override, hotel_now)
             state = evaluate_room(
                 room,
                 loaded.bookings,
@@ -589,7 +601,28 @@ class ClockDbSyncService:
             pms_payload = _pms_state_payload(state, correlation_id=correlation_id)
             semantic_hash = _room_state_hash(state, intent)
             latest_state = self._latest_room_state(room_id)
+            control_payload, override_audit_events = self._end_inactive_override_if_needed(
+                registry,
+                room_row,
+                room.key,
+                latest_override,
+                state,
+                observed_at=observed_at,
+                correlation_id=correlation_id,
+            )
+            audit_events_created += override_audit_events
             if latest_state is not None and latest_state.payload_hash == semantic_hash:
+                if control_payload is not None:
+                    self._session.add(
+                        self._outbox_event(
+                            self._topics.room_control_state(room.key),
+                            control_payload,
+                            observed_at=observed_at,
+                            correlation_id=correlation_id,
+                        )
+                    )
+                    outbox_events_created += 1
+                    affected_room_keys.append(room.key)
                 continue
 
             if intent is not None:
@@ -617,30 +650,30 @@ class ClockDbSyncService:
                 )
             )
             self._session.add(
-                db.OutboxEvent(
-                    topic=self._topics.room_pms_state(room.key),
-                    payload=pms_payload,
-                    qos=1,
-                    retain=True,
-                    status="pending",
-                    attempts=0,
-                    next_attempt_at=observed_at,
-                    created_at=observed_at,
+                self._outbox_event(
+                    self._topics.room_pms_state(room.key),
+                    pms_payload,
+                    observed_at=observed_at,
                     correlation_id=correlation_id,
                 )
             )
             outbox_events_created += 1
             if intent is not None:
                 self._session.add(
-                    db.OutboxEvent(
-                        topic=self._topics.room_intent_state(room.key),
-                        payload=intent.model_dump(mode="json"),
-                        qos=1,
-                        retain=True,
-                        status="pending",
-                        attempts=0,
-                        next_attempt_at=observed_at,
-                        created_at=observed_at,
+                    self._outbox_event(
+                        self._topics.room_intent_state(room.key),
+                        intent.model_dump(mode="json"),
+                        observed_at=observed_at,
+                        correlation_id=correlation_id,
+                    )
+                )
+                outbox_events_created += 1
+            if control_payload is not None:
+                self._session.add(
+                    self._outbox_event(
+                        self._topics.room_control_state(room.key),
+                        control_payload,
+                        observed_at=observed_at,
                         correlation_id=correlation_id,
                     )
                 )
@@ -673,6 +706,74 @@ class ClockDbSyncService:
             audit_events_created=audit_events_created,
         )
 
+    def _end_inactive_override_if_needed(
+        self,
+        registry: RegistryRows,
+        room_row: db.Room,
+        room_key: str,
+        latest_override: db.RoomPolicyOverride | None,
+        state: RoomStateEvaluation,
+        *,
+        observed_at: datetime,
+        correlation_id: UUID,
+    ) -> tuple[dict[str, Any] | None, int]:
+        if latest_override is None or latest_override.control_mode == ControlMode.AUTOMATIC.value:
+            return None, 0
+        if state.phase == AutomationPhase.MANUAL_OVERRIDE:
+            return None, 0
+        self._session.add(
+            db.RoomPolicyOverride(
+                room_id=room_row.id,
+                command_id=uuid4(),
+                control_mode=ControlMode.AUTOMATIC.value,
+                hvac_mode=ManualHvacMode.OFF.value,
+                target_temperature_c=None,
+                water_heater_enabled=None,
+                starts_at=observed_at,
+                expires_at=None,
+                until_checkout=False,
+                created_by="policy_scheduler",
+            )
+        )
+        self._session.add(
+            db.AuditEvent(
+                property_id=registry.property.id,
+                room_id=room_row.id,
+                booking_id=None,
+                event_type="manual_override_ended",
+                message="Manual override returned to automatic policy.",
+                payload={
+                    "room_key": room_key,
+                    "previous_command_id": str(latest_override.command_id),
+                    "automation_phase": state.phase.value,
+                    "reason": state.reason,
+                },
+                created_at=observed_at,
+                correlation_id=correlation_id,
+            )
+        )
+        return default_control_state_payload(room_key=room_key, now=observed_at), 1
+
+    def _outbox_event(
+        self,
+        topic: str,
+        payload: dict[str, Any],
+        *,
+        observed_at: datetime,
+        correlation_id: UUID,
+    ) -> db.OutboxEvent:
+        return db.OutboxEvent(
+            topic=topic,
+            payload=payload,
+            qos=1,
+            retain=True,
+            status="pending",
+            attempts=0,
+            next_attempt_at=observed_at,
+            created_at=observed_at,
+            correlation_id=correlation_id,
+        )
+
     def _latest_room_state(self, room_id: UUID) -> db.RoomState | None:
         return self._session.execute(
             select(db.RoomState)
@@ -681,8 +782,11 @@ class ClockDbSyncService:
             .limit(1)
         ).scalar_one_or_none()
 
-    def _active_override(self, room_id: UUID, now: datetime) -> ManualOverride | None:
-        row = latest_override_row(self._session, room_id)
+    def _active_override_from_row(
+        self,
+        row: db.RoomPolicyOverride | None,
+        now: datetime,
+    ) -> ManualOverride | None:
         if row is None:
             return None
         if not override_row_is_active(row, now):

@@ -51,6 +51,7 @@ class RuntimeHealth:
             and self.migration_current
             and (self.mqtt_connected or not self.requires_mqtt)
             and not self.errors
+            and not self.worker_errors
         )
 
 
@@ -274,34 +275,30 @@ class AppRuntime:
         self.publish_system_state()
 
     def publish_availability(self, status: str) -> None:
-        if self.mqtt_client is None:
-            return
-        self.mqtt_client.publish(self.topics.availability, status, qos=1, retain=True)
+        self._publish_direct(self.topics.availability, status)
 
     def publish_discovery(self) -> None:
-        if self.mqtt_client is None:
+        if self.mqtt_client is None or not self.mqtt_client.connected:
             return
         for topic, payload in system_discovery_configs(self.topics):
-            self.mqtt_client.publish(topic, serialize_payload(payload), qos=1, retain=True)
+            self._publish_direct(topic, serialize_payload(payload))
         for room in self.registry.rooms:
             for topic, payload in room_discovery_configs(room, self.topics):
-                self.mqtt_client.publish(topic, serialize_payload(payload), qos=1, retain=True)
+                self._publish_direct(topic, serialize_payload(payload))
 
     def publish_system_state(self) -> None:
-        if self.mqtt_client is None:
+        if self.mqtt_client is None or not self.mqtt_client.connected:
             return
         self.refresh_health()
         with self.session_factory() as session:
             payload = self.system_state(session)
-        self.mqtt_client.publish(
+        self._publish_direct(
             self.topics.system_state,
             serialize_payload(payload),
-            qos=1,
-            retain=True,
         )
 
     def publish_control_states(self) -> None:
-        if self.mqtt_client is None:
+        if self.mqtt_client is None or not self.mqtt_client.connected:
             return
         now = datetime.now(UTC)
         with self.session_factory() as session:
@@ -319,16 +316,34 @@ class AppRuntime:
                 for room in self.registry.rooms
             ]
         for topic, payload in payloads:
-            self.mqtt_client.publish(topic, serialize_payload(payload), qos=1, retain=True)
+            self._publish_direct(topic, serialize_payload(payload))
+
+    def _publish_direct(self, topic: str, payload: str | bytes) -> bool:
+        if self.mqtt_client is None or not self.mqtt_client.connected:
+            return False
+        receipt = self.mqtt_client.publish(topic, payload, qos=1, retain=True)
+        return_code = getattr(receipt, "rc", 0)
+        return return_code in (0, None)
 
     def system_state(self, session: Session) -> dict[str, object]:
         self.refresh_health()
-        return build_system_state(
+        payload = build_system_state(
             session,
             property_key=self.registry.property.key,
             now=datetime.now(UTC),
             mqtt_connected=self.mqtt_client.connected if self.mqtt_client is not None else False,
+            mqtt_required=self.settings.mqtt_enabled,
         )
+        payload.update(
+            {
+                "runtime_ready": self.health.ready,
+                "clock_polling_enabled": self.settings.clock_polling_enabled,
+                "policy_scheduler_enabled": self.settings.policy_scheduler_enabled,
+                "outbox_worker_enabled": self.settings.outbox_worker_enabled,
+                "worker_errors": dict(self.health.worker_errors),
+            }
+        )
+        return payload
 
     def _verify_database(self) -> None:
         with self.engine.connect() as connection:

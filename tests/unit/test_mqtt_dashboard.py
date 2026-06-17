@@ -48,6 +48,9 @@ def test_system_discovery_contains_online_sensor() -> None:
     configs = dict(system_discovery_configs(MqttTopics()))
 
     assert "homeassistant/binary_sensor/clock_ha_orchestrator_online/config" in configs
+    assert "homeassistant/binary_sensor/clock_runtime_ready/config" in configs
+    assert "homeassistant/sensor/hotel_active_manual_overrides/config" in configs
+    assert "homeassistant/sensor/clock_orchestrator_status/config" in configs
 
 
 def test_dashboard_has_floor_view_from_registry() -> None:
@@ -59,7 +62,25 @@ def test_dashboard_has_floor_view_from_registry() -> None:
     dashboard = generate_dashboard(registry)
 
     assert any(view["title"] == "Floor 2" for view in dashboard["views"])
+    assert any(view["title"] == "Manual" for view in dashboard["views"])
     assert dashboard["views"][0]["type"] == "sections"
     assert "cards" not in dashboard["views"][0]
     assert dashboard["views"][0]["sections"][0]["type"] == "grid"
-    assert dashboard["views"][0]["sections"][0]["cards"]
+    overview_cards = dashboard["views"][0]["sections"][0]["cards"]
+    assert {"type": "tile", "entity": "sensor.hotel_arrivals_today", "name": "Arrivals"} in (
+        overview_cards
+    )
+    assert any(
+        card.get("entity") == "sensor.hotel_active_manual_overrides"
+        for card in _flatten_cards(dashboard)
+    )
+
+
+def _flatten_cards(dashboard):
+    for view in dashboard["views"]:
+        for section in view["sections"]:
+            for card in section["cards"]:
+                if card["type"] == "conditional":
+                    yield card["card"]
+                else:
+                    yield card

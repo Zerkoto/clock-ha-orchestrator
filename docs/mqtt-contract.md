@@ -86,6 +86,13 @@ command prevents older manual rows from becoming active again. Expired timed
 overrides also return the room to automatic policy rather than reviving older
 commands.
 
+`until_checkout` is accepted only when the latest evaluated room state has a
+current assigned reservation and is not already checkout-due, conflicting,
+unknown or vacant. When a timed or until-checkout override naturally ends during
+policy evaluation, the orchestrator writes a system-generated automatic override
+row and publishes default retained `control/state` so Home Assistant controls do
+not remain stale.
+
 `control/state` is retained and has no guest PII:
 
 ```json

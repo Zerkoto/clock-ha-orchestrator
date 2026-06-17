@@ -6,26 +6,36 @@ views:
   - type: grid
     cards:
     - type: heading
-      heading: Clock Integration
+      heading: Today
       badges:
       - type: entity
         entity: binary_sensor.clock_ha_orchestrator_online
       - type: entity
-        entity: sensor.clock_last_successful_sync
+        entity: binary_sensor.clock_runtime_ready
       - type: entity
-        entity: sensor.clock_sync_lag
-    - type: tile
-      entity: sensor.hotel_checked_in_rooms
-      name: Checked In
-    - type: tile
-      entity: sensor.hotel_expected_rooms
-      name: Expected
+        entity: sensor.clock_orchestrator_status
     - type: tile
       entity: sensor.hotel_arrivals_today
       name: Arrivals
     - type: tile
       entity: sensor.hotel_departures_today
       name: Departures
+    - type: tile
+      entity: sensor.hotel_checked_in_rooms
+      name: Checked In
+    - type: tile
+      entity: sensor.hotel_expected_rooms
+      name: Expected
+    - type: heading
+      heading: Attention
+    - type: conditional
+      conditions:
+      - entity: sensor.hotel_unassigned_arrivals
+        state_not: '0'
+      card:
+        type: tile
+        entity: sensor.hotel_unassigned_arrivals
+        color: amber
     - type: conditional
       conditions:
       - entity: sensor.hotel_room_conflicts
@@ -33,6 +43,22 @@ views:
       card:
         type: tile
         entity: sensor.hotel_room_conflicts
+        color: red
+    - type: conditional
+      conditions:
+      - entity: sensor.hotel_active_manual_overrides
+        state_not: '0'
+      card:
+        type: tile
+        entity: sensor.hotel_active_manual_overrides
+        color: blue
+    - type: conditional
+      conditions:
+      - entity: sensor.clock_dead_letter_outbox
+        state_not: '0'
+      card:
+        type: tile
+        entity: sensor.clock_dead_letter_outbox
         color: red
 - title: Arrivals
   type: sections
@@ -55,6 +81,60 @@ views:
     - type: entities
       entities:
       - sensor.hotel_departures_today
+- title: Manual
+  type: sections
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Manual Overrides
+    - type: tile
+      entity: sensor.hotel_active_manual_overrides
+    - type: conditional
+      conditions:
+      - entity: select.room_101_control_mode
+        state_not: automatic
+      card:
+        type: entities
+        title: Room 101
+        entities:
+        - sensor.room_101_automation_phase
+        - select.room_101_control_mode
+        - select.room_101_manual_hvac_mode
+        - number.room_101_manual_temperature
+        - select.room_101_override_duration
+        - switch.room_101_manual_water_heater
+        - button.room_101_return_to_automatic
+    - type: conditional
+      conditions:
+      - entity: select.room_102_control_mode
+        state_not: automatic
+      card:
+        type: entities
+        title: Room 102
+        entities:
+        - sensor.room_102_automation_phase
+        - select.room_102_control_mode
+        - select.room_102_manual_hvac_mode
+        - number.room_102_manual_temperature
+        - select.room_102_override_duration
+        - switch.room_102_manual_water_heater
+        - button.room_102_return_to_automatic
+    - type: conditional
+      conditions:
+      - entity: select.room_214_control_mode
+        state_not: automatic
+      card:
+        type: entities
+        title: Room 214
+        entities:
+        - sensor.room_214_automation_phase
+        - select.room_214_control_mode
+        - select.room_214_manual_hvac_mode
+        - number.room_214_manual_temperature
+        - select.room_214_override_duration
+        - switch.room_214_manual_water_heater
+        - button.room_214_return_to_automatic
 - title: Alerts
   type: sections
   sections:
@@ -66,7 +146,11 @@ views:
       entities:
       - sensor.hotel_unassigned_arrivals
       - sensor.hotel_room_conflicts
+      - sensor.hotel_rooms_needing_attention
+      - sensor.hotel_active_manual_overrides
       - sensor.clock_sync_lag
+      - sensor.clock_pending_outbox
+      - sensor.clock_dead_letter_outbox
 - title: Integration
   type: sections
   sections:
@@ -77,8 +161,15 @@ views:
     - type: entities
       entities:
       - binary_sensor.clock_ha_orchestrator_online
+      - binary_sensor.clock_runtime_ready
+      - binary_sensor.clock_mqtt_connected
+      - binary_sensor.clock_policy_scheduler_enabled
+      - binary_sensor.clock_outbox_worker_enabled
+      - sensor.clock_orchestrator_status
       - sensor.clock_last_successful_sync
       - sensor.clock_sync_lag
+      - sensor.clock_pending_outbox
+      - sensor.clock_dead_letter_outbox
 - title: Floor 1
   type: sections
   sections:

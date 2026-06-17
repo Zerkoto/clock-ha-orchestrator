@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.enums import ControlMode, ManualHvacMode
+from app.domain.enums import AutomationPhase, ControlMode, ManualHvacMode
 from app.domain.models import AutomationPolicy, ManualOverride, Room, RoomRegistry
 from app.mqtt.topics import MqttTopics
 from app.persistence import models as db
@@ -165,11 +165,20 @@ class RoomControlCommandService:
         ).scalar_one_or_none()
         if room_row is None:
             return default_control_state_payload(room_key=room_key, now=now)
+        now_utc = _to_utc(now)
         latest = latest_override_row(self._session, room_row.id)
+        latest_state = latest_room_state(self._session, room_row.id)
+        if latest is not None and not override_row_is_active(latest, now_utc):
+            active = False
+        elif latest_state is not None:
+            active = latest_state.automation_phase == AutomationPhase.MANUAL_OVERRIDE.value
+        else:
+            active = None
         return control_state_payload_from_override(
             room_key=room_key,
             row=latest,
-            now=_to_utc(now),
+            now=now_utc,
+            active=active,
         )
 
     def _build_override_row(
@@ -243,6 +252,13 @@ class RoomControlCommandService:
             duration = base.duration
         else:
             raise ValueError(f"unsupported control field: {field}")
+
+        if duration == "until_checkout" and not _room_has_checkout_boundary(
+            self._session,
+            room_row.id,
+            now,
+        ):
+            raise ValueError("until_checkout requires a current assigned reservation")
 
         expires_at, until_checkout = _expiry_for_duration(duration, now)
         if control_mode == ControlMode.AUTOMATIC:
@@ -363,6 +379,15 @@ def latest_override_row(session: Session, room_id: UUID) -> db.RoomPolicyOverrid
     ).scalar_one_or_none()
 
 
+def latest_room_state(session: Session, room_id: UUID) -> db.RoomState | None:
+    return session.execute(
+        select(db.RoomState)
+        .where(db.RoomState.room_id == room_id)
+        .order_by(db.RoomState.created_at.desc(), db.RoomState.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def override_row_is_active(row: db.RoomPolicyOverride, now: datetime) -> bool:
     if row.control_mode == ControlMode.AUTOMATIC.value:
         return False
@@ -395,8 +420,12 @@ def control_state_payload_from_override(
     room_key: str,
     row: db.RoomPolicyOverride | None,
     now: datetime,
+    active: bool | None = None,
 ) -> dict[str, Any]:
-    if row is None or not override_row_is_active(row, now):
+    if row is None:
+        return default_control_state_payload(room_key=room_key, now=now)
+    is_active = override_row_is_active(row, now) if active is None else active
+    if not is_active:
         return default_control_state_payload(room_key=room_key, now=now)
     expires_at = _to_utc(row.expires_at).isoformat() if row.expires_at else None
     return {
@@ -437,6 +466,20 @@ def manual_override_from_row(row: db.RoomPolicyOverride) -> ManualOverride | Non
         until_checkout=row.until_checkout,
         command_id=row.command_id,
     )
+
+
+def _room_has_checkout_boundary(session: Session, room_id: UUID, now: datetime) -> bool:
+    latest_state = latest_room_state(session, room_id)
+    if latest_state is None or latest_state.booking_id is None:
+        return False
+    if latest_state.expires_at is not None and _to_utc(latest_state.expires_at) <= _to_utc(now):
+        return False
+    return latest_state.automation_phase in {
+        AutomationPhase.MANUAL_OVERRIDE.value,
+        AutomationPhase.OCCUPIED.value,
+        AutomationPhase.PRE_ARRIVAL.value,
+        AutomationPhase.RESERVED.value,
+    }
 
 
 def _payload_text(payload: bytes) -> str:

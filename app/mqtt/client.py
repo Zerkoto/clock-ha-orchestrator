@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ssl
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from threading import Event
 from typing import Any
@@ -32,6 +33,7 @@ class ManagedMqttClient:
         self._disconnect_event = Event()
         self._connect_error: str | None = None
         self._handlers: dict[str, MessageHandler] = {}
+        self._executor = ThreadPoolExecutor(max_workers=settings.mqtt_callback_workers)
         if settings.mqtt_username:
             self._client.username_pw_set(
                 settings.mqtt_username,
@@ -82,6 +84,7 @@ class ManagedMqttClient:
         self._client.disconnect()
         self._disconnect_event.wait(self._settings.mqtt_connect_timeout_seconds)
         self._client.loop_stop()
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def publish(
         self,
@@ -113,8 +116,7 @@ class ManagedMqttClient:
             for topic in self._handlers:
                 client.subscribe(topic, qos=1)
             if self._on_connected is not None:
-                with suppress(Exception):
-                    self._on_connected()
+                self._executor.submit(_safe_call, self._on_connected)
         else:
             self._connect_error = str(reason_code)
         self._connect_event.set()
@@ -140,13 +142,15 @@ class ManagedMqttClient:
         del client, userdata
         for topic, handler in self._handlers.items():
             if mqtt.topic_matches_sub(topic, message.topic):
-                try:
-                    handler(message.topic, bytes(message.payload))
-                except Exception:
-                    continue
+                self._executor.submit(_safe_call, handler, message.topic, bytes(message.payload))
 
 
 def _wait_for_receipt(receipt: Any, *, timeout_seconds: int) -> None:
     wait = getattr(receipt, "wait_for_publish", None)
     if callable(wait):
         wait(timeout=timeout_seconds)
+
+
+def _safe_call(callback: Callable[..., None], *args: Any) -> None:
+    with suppress(Exception):
+        callback(*args)

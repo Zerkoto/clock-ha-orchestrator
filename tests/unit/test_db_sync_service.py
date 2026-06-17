@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.clock.db_sync import ClockDbSyncService
 from app.clock.sync import SyncCursorState, SyncRunResult
-from app.domain.enums import AutomationPhase, ControlMode, ManualHvacMode
+from app.domain.enums import AutomationPhase, BookingStatus, ControlMode, ManualHvacMode
 from app.domain.models import PropertyRegistry, Room, RoomRegistry
 from app.persistence import models as db
 from app.policy.control import RoomControlCommandService
@@ -351,6 +351,166 @@ def test_return_to_automatic_suppresses_older_manual_override(
         assert latest_intent.payload["control_mode"] == ControlMode.AUTOMATIC.value
 
 
+def test_timed_manual_override_expires_and_publishes_automatic_control_state(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    checked_in = booking(status=BookingStatus.CHECKED_IN)
+    apply_sync(engine, registry, policy, [checked_in], NOW)
+    with Session(engine) as session, session.begin():
+        RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy.automation,
+        ).apply_mqtt_command(
+            room_key="214",
+            field="temperature",
+            payload=b"21.5",
+            now=LATER,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000446"),
+        )
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=LATER,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000447"),
+        )
+
+    expired_at = LATER + timedelta(minutes=61)
+    with Session(engine) as session:
+        result = ClockDbSyncService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=expired_at,
+            correlation_id=CORRELATION_ID,
+        )
+
+    assert result.audit_events_created >= 1
+
+    with Session(engine) as session:
+        latest_control_state = latest_outbox_payload(
+            session,
+            "hotel/v1/rooms/214/control/state",
+        )
+        latest_intent = latest_outbox_payload(session, "hotel/v1/rooms/214/intent/state")
+        latest_override = session.execute(
+            select(db.RoomPolicyOverride)
+            .where(db.RoomPolicyOverride.room_id == select_room_id(session, "214"))
+            .order_by(db.RoomPolicyOverride.starts_at.desc(), db.RoomPolicyOverride.id.desc())
+            .limit(1)
+        ).scalar_one()
+
+    assert latest_control_state["control_mode"] == ControlMode.AUTOMATIC.value
+    assert latest_control_state["active"] is False
+    assert latest_control_state["command_id"] is None
+    assert latest_intent["automation_phase"] == AutomationPhase.OCCUPIED.value
+    assert latest_override.control_mode == ControlMode.AUTOMATIC.value
+
+
+def test_until_checkout_override_ends_at_checkout_and_clears_control_state(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    checked_in = booking(status=BookingStatus.CHECKED_IN)
+    apply_sync(engine, registry, policy, [checked_in], NOW)
+    with Session(engine) as session, session.begin():
+        service = RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy.automation,
+        )
+        service.apply_mqtt_command(
+            room_key="214",
+            field="temperature",
+            payload=b"21.5",
+            now=LATER,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000448"),
+        )
+        result = service.apply_mqtt_command(
+            room_key="214",
+            field="duration",
+            payload=b"until_checkout",
+            now=LATER + timedelta(minutes=1),
+            correlation_id=UUID("00000000-0000-0000-0000-000000000449"),
+        )
+
+    assert result.accepted is True
+
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=LATER + timedelta(minutes=2),
+            correlation_id=UUID("00000000-0000-0000-0000-000000000450"),
+        )
+
+    after_checkout = datetime(2026, 12, 24, 9, 30, tzinfo=UTC)
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        ).evaluate_room_keys(
+            room_keys={"214"},
+            now=after_checkout,
+            correlation_id=CORRELATION_ID,
+        )
+
+    with Session(engine) as session:
+        latest_control_state = latest_outbox_payload(
+            session,
+            "hotel/v1/rooms/214/control/state",
+        )
+        latest_intent = latest_outbox_payload(session, "hotel/v1/rooms/214/intent/state")
+
+    assert latest_control_state["control_mode"] == ControlMode.AUTOMATIC.value
+    assert latest_control_state["active"] is False
+    assert latest_intent["automation_phase"] == AutomationPhase.CHECKOUT_DUE.value
+    assert latest_intent["control_mode"] == ControlMode.AUTOMATIC.value
+
+
+def test_until_checkout_command_requires_current_reservation(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+) -> None:
+    with Session(engine) as session, session.begin():
+        service = RoomControlCommandService(
+            session=session,
+            room_registry=registry,
+            policy=policy.automation,
+        )
+        service.apply_mqtt_command(
+            room_key="214",
+            field="temperature",
+            payload=b"21.5",
+            now=NOW,
+            correlation_id=UUID("00000000-0000-0000-0000-000000000451"),
+        )
+        result = service.apply_mqtt_command(
+            room_key="214",
+            field="duration",
+            payload=b"until_checkout",
+            now=LATER,
+            correlation_id=CORRELATION_ID,
+        )
+
+    assert result.accepted is False
+    assert result.error == "until_checkout requires a current assigned reservation"
+
+
 def test_invalid_home_assistant_command_is_audited_without_outbox(
     engine: Engine,
     registry: RoomRegistry,
@@ -447,6 +607,23 @@ def apply_sync(
 
 def count_rows(session: Session, model: type[db.Base]) -> int:
     return session.scalar(select(func.count()).select_from(model)) or 0
+
+
+def latest_outbox_payload(session: Session, topic: str) -> dict:
+    return (
+        session.execute(
+            select(db.OutboxEvent)
+            .where(db.OutboxEvent.topic == topic)
+            .order_by(db.OutboxEvent.created_at.desc(), db.OutboxEvent.id.desc())
+            .limit(1)
+        )
+        .scalar_one()
+        .payload
+    )
+
+
+def select_room_id(session: Session, room_key: str) -> UUID:
+    return session.execute(select(db.Room.id).where(db.Room.key == room_key)).scalar_one()
 
 
 def utc_readback(value: datetime) -> datetime:

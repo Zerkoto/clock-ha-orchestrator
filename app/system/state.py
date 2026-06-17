@@ -17,6 +17,7 @@ def build_system_state(
     property_key: str,
     now: datetime,
     mqtt_connected: bool,
+    mqtt_required: bool = True,
 ) -> dict[str, Any]:
     property_row = session.execute(
         select(db.Property).where(db.Property.key == property_key)
@@ -39,6 +40,17 @@ def build_system_state(
 
     latest_states = _latest_room_states(session)
     hotel_now = now.astimezone(ZoneInfo(property_row.timezone))
+    room_conflicts = sum(
+        1 for state in latest_states if state.automation_phase == AutomationPhase.CONFLICT.value
+    )
+    active_manual_overrides = sum(
+        1
+        for state in latest_states
+        if state.automation_phase == AutomationPhase.MANUAL_OVERRIDE.value
+    )
+    rooms_needing_attention = sum(1 for state in latest_states if state.needs_attention)
+    pending_outbox = _count_outbox(session, "pending", "retrying", "publishing")
+    dead_letter_outbox = _count_outbox(session, "dead_letter")
     lag_seconds = (
         int((now - last_success.finished_at).total_seconds())
         if last_success is not None and last_success.finished_at is not None
@@ -47,7 +59,15 @@ def build_system_state(
 
     return {
         "schema_version": 1,
-        "status": "online",
+        "status": _system_status(
+            mqtt_connected=mqtt_connected,
+            mqtt_required=mqtt_required,
+            last_success_seen=last_success is not None,
+            room_conflicts=room_conflicts,
+            rooms_needing_attention=rooms_needing_attention,
+            pending_outbox=pending_outbox,
+            dead_letter_outbox=dead_letter_outbox,
+        ),
         "version": "0.1.0",
         "last_attempt_at": last_run.started_at.isoformat() if last_run is not None else None,
         "last_success_at": (
@@ -67,17 +87,11 @@ def build_system_state(
         "arrivals_today": _count_arrivals(session, property_row.id, hotel_now),
         "departures_today": _count_departures(session, property_row.id, hotel_now),
         "unassigned_arrivals": _count_unassigned_arrivals(session, property_row.id),
-        "room_conflicts": sum(
-            1 for state in latest_states if state.automation_phase == AutomationPhase.CONFLICT.value
-        ),
-        "active_manual_overrides": sum(
-            1
-            for state in latest_states
-            if state.automation_phase == AutomationPhase.MANUAL_OVERRIDE.value
-        ),
-        "rooms_needing_attention": sum(1 for state in latest_states if state.needs_attention),
-        "pending_outbox": _count_outbox(session, "pending", "retrying", "publishing"),
-        "dead_letter_outbox": _count_outbox(session, "dead_letter"),
+        "room_conflicts": room_conflicts,
+        "active_manual_overrides": active_manual_overrides,
+        "rooms_needing_attention": rooms_needing_attention,
+        "pending_outbox": pending_outbox,
+        "dead_letter_outbox": dead_letter_outbox,
         "updated_at": now.isoformat(),
     }
 
@@ -108,20 +122,43 @@ def _empty_state(*, now: datetime, mqtt_connected: bool) -> dict[str, Any]:
 
 
 def _latest_room_states(session: Session) -> list[db.RoomState]:
-    latest_created = (
-        select(db.RoomState.room_id, func.max(db.RoomState.created_at).label("created_at"))
-        .group_by(db.RoomState.room_id)
-        .subquery()
-    )
+    ranked = select(
+        db.RoomState.id.label("id"),
+        func.row_number()
+        .over(
+            partition_by=db.RoomState.room_id,
+            order_by=(db.RoomState.created_at.desc(), db.RoomState.id.desc()),
+        )
+        .label("rank"),
+    ).subquery()
     return list(
         session.execute(
-            select(db.RoomState).join(
-                latest_created,
-                (db.RoomState.room_id == latest_created.c.room_id)
-                & (db.RoomState.created_at == latest_created.c.created_at),
-            )
+            select(db.RoomState)
+            .join(ranked, db.RoomState.id == ranked.c.id)
+            .where(ranked.c.rank == 1)
         ).scalars()
     )
+
+
+def _system_status(
+    *,
+    mqtt_connected: bool,
+    mqtt_required: bool,
+    last_success_seen: bool,
+    room_conflicts: int,
+    rooms_needing_attention: int,
+    pending_outbox: int,
+    dead_letter_outbox: int,
+) -> str:
+    if dead_letter_outbox:
+        return "error"
+    if (mqtt_required and not mqtt_connected) or not last_success_seen:
+        return "starting"
+    if pending_outbox:
+        return "degraded"
+    if room_conflicts or rooms_needing_attention:
+        return "attention"
+    return "online"
 
 
 def _sync_duration_seconds(sync_run: db.SyncRun | None) -> int | None:

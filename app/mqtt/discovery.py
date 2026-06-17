@@ -180,6 +180,7 @@ def system_discovery_configs(topics: MqttTopics) -> Iterable[tuple[str, dict[str
         "manufacturer": "Clock PMS+ / Home Assistant Orchestrator",
     }
     sensors = {
+        "clock_orchestrator_status": ("Orchestrator Status", "{{ value_json.status }}"),
         "clock_last_successful_sync": ("Last Successful Sync", "{{ value_json.last_success_at }}"),
         "clock_sync_lag": ("Clock Sync Lag", "{{ value_json.lag_seconds }}"),
         "hotel_checked_in_rooms": ("Checked In Rooms", "{{ value_json.checked_in_rooms }}"),
@@ -191,19 +192,70 @@ def system_discovery_configs(topics: MqttTopics) -> Iterable[tuple[str, dict[str
             "{{ value_json.unassigned_arrivals }}",
         ),
         "hotel_room_conflicts": ("Room Conflicts", "{{ value_json.room_conflicts }}"),
+        "hotel_active_manual_overrides": (
+            "Active Manual Overrides",
+            "{{ value_json.active_manual_overrides }}",
+        ),
+        "hotel_rooms_needing_attention": (
+            "Rooms Needing Attention",
+            "{{ value_json.rooms_needing_attention }}",
+        ),
+        "clock_pending_outbox": ("Pending Outbox", "{{ value_json.pending_outbox }}"),
+        "clock_dead_letter_outbox": ("Dead Letter Outbox", "{{ value_json.dead_letter_outbox }}"),
     }
-    yield (
-        discovery_topic("binary_sensor", "clock_ha_orchestrator_online"),
-        {
-            "name": "Clock HA Orchestrator Online",
-            "object_id": "clock_ha_orchestrator_online",
-            "unique_id": "clock_ha_orchestrator_online",
-            "state_topic": topics.availability,
-            "payload_on": "online",
-            "payload_off": "offline",
+    binary_sensors = {
+        "clock_ha_orchestrator_online": (
+            "Clock HA Orchestrator Online",
+            topics.availability,
+            None,
+            "online",
+            "offline",
+        ),
+        "clock_runtime_ready": (
+            "Clock Runtime Ready",
+            topics.system_state,
+            "{{ value_json.runtime_ready }}",
+            "True",
+            "False",
+        ),
+        "clock_mqtt_connected": (
+            "Clock MQTT Connected",
+            topics.system_state,
+            "{{ value_json.mqtt_connected }}",
+            "True",
+            "False",
+        ),
+        "clock_policy_scheduler_enabled": (
+            "Policy Scheduler Enabled",
+            topics.system_state,
+            "{{ value_json.policy_scheduler_enabled }}",
+            "True",
+            "False",
+        ),
+        "clock_outbox_worker_enabled": (
+            "Outbox Worker Enabled",
+            topics.system_state,
+            "{{ value_json.outbox_worker_enabled }}",
+            "True",
+            "False",
+        ),
+    }
+    for object_id, (name, state_topic, template, payload_on, payload_off) in binary_sensors.items():
+        payload = {
+            "name": name,
+            "object_id": object_id,
+            "unique_id": object_id,
+            "state_topic": state_topic,
+            "payload_on": payload_on,
+            "payload_off": payload_off,
             "device": device,
-        },
-    )
+        }
+        if template is not None:
+            payload["value_template"] = template
+            payload["availability_topic"] = topics.availability
+            payload["payload_available"] = "online"
+            payload["payload_not_available"] = "offline"
+        yield (discovery_topic("binary_sensor", object_id), payload)
     for object_id, (name, template) in sensors.items():
         yield (
             discovery_topic("sensor", object_id),

@@ -41,16 +41,17 @@ class Settings(BaseSettings):
     mqtt_tls: bool = False
     mqtt_topic_prefix: str = "hotel/v1"
     mqtt_client_id: str = "clock-ha-orchestrator"
-    mqtt_connect_timeout_seconds: int = Field(default=10, ge=1)
-    mqtt_publish_timeout_seconds: int = Field(default=10, ge=1)
+    mqtt_connect_timeout_seconds: int = Field(default=5, ge=1)
+    mqtt_publish_timeout_seconds: int = Field(default=2, ge=1)
+    mqtt_callback_workers: int = Field(default=1, ge=1, le=16)
 
     policy_scheduler_enabled: bool = False
     policy_tick_seconds: int = Field(default=60, ge=10)
     outbox_worker_enabled: bool = False
     outbox_poll_seconds: int = Field(default=5, ge=1)
-    outbox_batch_size: int = Field(default=50, ge=1)
+    outbox_batch_size: int = Field(default=25, ge=1)
     outbox_max_attempts: int = Field(default=8, ge=1)
-    outbox_stale_publish_seconds: int = Field(default=120, ge=10)
+    outbox_stale_publish_seconds: int = Field(default=30, ge=10)
     admin_api_key: SecretStr | None = None
 
     room_registry_path: Path = Path("config/rooms.example.yaml")
@@ -88,6 +89,10 @@ class Settings(BaseSettings):
                 raise ValueError("ADMIN_API_KEY is required in production")
         if self.clock_client_mode == "fixture" and self.clock_fixture_bookings_path is None:
             raise ValueError("CLOCK_FIXTURE_BOOKINGS_PATH is required for fixture Clock mode")
+        if self.clock_polling_enabled and self.clock_client_mode == "disabled":
+            raise ValueError("CLOCK_POLLING_ENABLED requires CLOCK_CLIENT_MODE fixture or live")
+        if self.outbox_worker_enabled and not self.mqtt_enabled:
+            raise ValueError("OUTBOX_WORKER_ENABLED requires MQTT_ENABLED")
         return self
 
 
