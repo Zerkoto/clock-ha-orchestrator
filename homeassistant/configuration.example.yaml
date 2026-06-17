@@ -1,0 +1,16 @@
+mqtt:
+  broker: mosquitto
+  port: 1883
+  username: home_assistant
+  password: !secret mqtt_password
+
+lovelace:
+  mode: yaml
+  dashboards:
+    hotel-reception:
+      mode: yaml
+      title: Hotel Reception
+      icon: mdi:hotel
+      show_in_sidebar: true
+      filename: dashboards/hotel-reception.yaml
+

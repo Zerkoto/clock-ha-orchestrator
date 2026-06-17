@@ -1,0 +1,16 @@
+property:
+  timezone: Europe/Sofia
+  default_check_in_time: "15:00"
+  default_check_out_time: "11:00"
+
+automation:
+  pre_arrival_lead_minutes: 240
+  default_heating_target_c: 22.0
+  default_cooling_target_c: 24.0
+  vacant_heating_setback_c: 16.0
+  occupied_minimum_target_c: 19.0
+  occupied_maximum_target_c: 24.0
+  manual_override_max_minutes: 720
+  turn_on_water_heater_pre_arrival: true
+  enable_convectors_pre_arrival: true
+
