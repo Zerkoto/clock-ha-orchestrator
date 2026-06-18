@@ -39,6 +39,12 @@ class G301Mode(IntEnum):
     AUTO = 5
 
 
+class G301ModeLimitation(IntEnum):
+    NONE = 0
+    HEAT_PROHIBITED = 1
+    COOL_DRY_PROHIBITED = 2
+
+
 @dataclass(frozen=True)
 class G301Capabilities:
     up_down_swing: bool
@@ -49,6 +55,14 @@ class G301Capabilities:
     energy_saving: bool
     health: bool
     access_control: bool
+
+
+@dataclass(frozen=True)
+class G301DeviceProfile:
+    capabilities: G301Capabilities
+    mode_limitation: G301ModeLimitation
+    lower_temperature_c: float
+    upper_temperature_c: float
 
 
 @dataclass(frozen=True)
@@ -88,6 +102,31 @@ def parse_capabilities(raw: int) -> G301Capabilities:
         energy_saving=_bit(raw, 5),
         health=_bit(raw, 6),
         access_control=_bit(raw, 7),
+    )
+
+
+def build_device_profile(
+    *,
+    capabilities_raw: int,
+    mode_limitation_raw: int,
+    upper_temperature_raw: int,
+    lower_temperature_raw: int,
+) -> G301DeviceProfile:
+    try:
+        mode_limitation = G301ModeLimitation(mode_limitation_raw)
+    except ValueError as exc:
+        raise ValueError(f"unsupported G301 mode limitation: {mode_limitation_raw}") from exc
+    if not 16 <= lower_temperature_raw <= 25:
+        raise ValueError(f"invalid G301 lower temperature limit: {lower_temperature_raw}")
+    if not 26 <= upper_temperature_raw <= 31:
+        raise ValueError(f"invalid G301 upper temperature limit: {upper_temperature_raw}")
+    if lower_temperature_raw > upper_temperature_raw:
+        raise ValueError("G301 lower temperature limit exceeds upper limit")
+    return G301DeviceProfile(
+        capabilities=parse_capabilities(capabilities_raw),
+        mode_limitation=mode_limitation,
+        lower_temperature_c=float(lower_temperature_raw),
+        upper_temperature_c=float(upper_temperature_raw),
     )
 
 

@@ -42,10 +42,19 @@ Adapters report command failures without changing desired state. They may publis
 hardware-specific diagnostics under their own documented topics, but Home
 Assistant must not publish directly to hardware topics.
 
+Shared-bus transports must include the slave/unit address on every read and
+write. Traffic is parallel across independent entrances and serialized within
+each entrance.
+
 ## G301 Version G Baseline
 
 The in-repository `app.g301_adapter` package is an offline foundation only. It
-contains register codecs, a safe planner, readback comparison, an in-memory
-simulator and a worker shell. It does not open a gateway connection or claim
-production Modbus behavior until bench commissioning confirms gateway topology,
-slave addressing and timing.
+contains register codecs, typed async transport boundaries, capability-aware
+planning, status-register readback, bounded retries, stale-intent rejection, an
+in-memory multi-slave simulator and a serialized entrance worker shell. It does
+not open a gateway connection or claim production Modbus behavior until bench
+commissioning confirms gateway topology, slave addressing and timing.
+
+The adapter will run as a separate process from the FastAPI orchestrator. The
+orchestrator therefore has no `G301_ADAPTER_ENABLED` switch; adapter runtime
+settings belong to the future adapter executable and container.

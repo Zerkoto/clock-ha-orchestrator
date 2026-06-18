@@ -82,14 +82,20 @@ specific commissioning exception is documented.
 ## G301 Adapter
 
 The repository includes offline G301 Version G codecs, planning, readback
-comparison and a simulator. Do not enable live G301 execution until the project
-confirms:
+comparison and a simulator. The offline worker is slave-aware, asynchronous,
+serialized per entrance, capability-aware and verifies actual status with
+delayed retries. It is not a live service. Do not enable live G301 execution
+until the project confirms:
 
 - official entrance names and exact room membership
 - gateway host/port and network route per entrance
 - G301 slave address per room
 - bench-tested read/write/readback behavior for one real device
 - approved polling interval, timeout and retry policy
+
+The live adapter must be deployed as a separate executable/container on the OT
+network. Do not add it to the FastAPI lifespan. Run one serialized worker per
+entrance and allow those independent entrance workers to execute concurrently.
 
 ## Backups
 

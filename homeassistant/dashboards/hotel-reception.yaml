@@ -184,6 +184,13 @@ views:
       - binary_sensor.entrance_entrance_a_adapter_online
       - binary_sensor.entrance_entrance_a_gateway_online
       - sensor.entrance_entrance_a_last_poll
+      - sensor.entrance_entrance_a_last_successful_poll
+      - sensor.entrance_entrance_a_gateway_latency
+      - sensor.entrance_entrance_a_consecutive_failures
+      - sensor.entrance_entrance_a_online_slaves
+      - sensor.entrance_entrance_a_offline_slaves
+      - sensor.entrance_entrance_a_scan_duration
+      - sensor.entrance_entrance_a_command_queue_depth
       - sensor.entrance_entrance_a_room_mismatches
     - type: entities
       title: Room 101

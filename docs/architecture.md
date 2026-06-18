@@ -17,8 +17,9 @@ Clock PMS+ remains the source of truth for reservation status, dates, check-in, 
 - `app.persistence`: PostgreSQL schema and migration model.
 - `app.mqtt`: versioned topic contract, serialization and Home Assistant MQTT Discovery.
 - `app.dashboard`: standard Home Assistant dashboard generation from the room registry.
-- `app.g301_adapter`: offline G301 Version G codecs, planner, readback comparison
-  and simulator. Live gateway transport remains disabled until commissioning.
+- `app.g301_adapter`: offline G301 Version G codecs, slave-aware async transport
+  contract, capability-aware planner, actual-state readback and multi-slave
+  simulator. Live gateway transport remains disabled until commissioning.
 
 ## Transactional Outbox
 
@@ -48,3 +49,7 @@ The recommended deployment keeps the G301 adapter separate from Clock
 synchronization. The adapter consumes MQTT desired intent, performs protocol
 translation, publishes room reported state, publishes intent execution results
 and exposes per-entrance adapter/gateway health.
+
+There is no G301 enable switch in the orchestrator runtime. The live adapter
+will have a separate executable/container and OT-network settings after bench
+testing identifies the gateway transport mode.

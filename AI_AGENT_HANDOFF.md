@@ -146,9 +146,11 @@ slice:
     and desired-versus-reported room state entities.
 21. Adapter-facing MQTT schemas and topics for reported room state, intent
     execution results and entrance adapter health.
-22. Offline G301 Version G register codecs, capability parsing, fault decoding,
-    safe intent planner, readback comparison, simulator and worker shell under
-    `app/g301_adapter`. This is not live Modbus transport.
+22. Offline G301 Version G register codecs, typed slave-aware async transport
+    boundary, capability and limit validation, actual-status readback, delayed
+    verification, bounded retry, stale-intent rejection, multi-slave simulator
+    and serialized entrance worker under `app/g301_adapter`. This is not live
+    Modbus transport.
 23. Dockerfile, Docker Compose with app/OT network separation, and hardened
     Mosquitto examples.
 24. Documentation under `docs/`, including `docs/g301-register-map.md`.
@@ -225,10 +227,10 @@ Result after the entrance/G301 foundation on
 `codex/entrance-g301-foundation`:
 
 ```text
-pytest: 54 passed
+pytest: 60 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
-mypy: Success, no issues found in 42 source files
+mypy: Success, no issues found in 43 source files
 alembic heads: 20260618_0005 (head)
 ```
 
@@ -415,7 +417,9 @@ Other important next work:
 4. Complete the official five entrance names, exact room membership, gateway
    host/port values and G301 slave address map after project commissioning
    begins.
-5. Bench-test one real G301/AC before adding live Modbus transport.
+5. Bench-test one real G301/AC before adding live Modbus transport or the
+   separate adapter executable. Confirm command order, status delay and gateway
+   mode rather than baking those assumptions into the offline contract.
 6. Expand end-to-end tests for unassigned booking -> assigned room ->
    pre-arrival -> check-in -> manual override -> room move -> checkout.
 

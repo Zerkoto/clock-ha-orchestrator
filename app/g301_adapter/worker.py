@@ -1,24 +1,31 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import TypeVar
 
+from app.domain.enums import ManualHvacMode
 from app.domain.models import DesiredRoomIntent
 from app.g301_adapter.planner import (
+    G301Plan,
     G301PlanningError,
+    RegisterWrite,
     compare_readback,
     plan_room_intent,
 )
+from app.g301_adapter.registers import G301DeviceProfile, G301Register, build_device_profile
+from app.g301_adapter.transport import (
+    G301DeviceOffline,
+    G301ModbusException,
+    G301ProtocolError,
+    G301RegisterClient,
+    G301TransportError,
+    G301TransportTimeout,
+)
 from app.mqtt.schemas import IntentExecutionResult, RegisterWriteResult
 
-
-class G301RegisterClient(Protocol):
-    def write_register(self, address: int, value: int) -> None:
-        pass
-
-    def read_holding_registers(self, address: int, count: int) -> list[int]:
-        pass
+T = TypeVar("T")
 
 
 class G301EntranceWorker:
@@ -28,60 +35,230 @@ class G301EntranceWorker:
         entrance_key: str,
         room_slave_addresses: Mapping[str, int],
         client: G301RegisterClient,
+        operation_timeout_seconds: float = 5.0,
+        max_operation_attempts: int = 3,
+        retry_backoff_seconds: float = 0.1,
+        readback_attempts: int = 3,
+        readback_delay_seconds: float = 1.0,
     ) -> None:
+        if operation_timeout_seconds <= 0:
+            raise ValueError("operation_timeout_seconds must be positive")
+        if max_operation_attempts < 1:
+            raise ValueError("max_operation_attempts must be at least 1")
+        if readback_attempts < 1:
+            raise ValueError("readback_attempts must be at least 1")
+        if retry_backoff_seconds < 0 or readback_delay_seconds < 0:
+            raise ValueError("retry and readback delays cannot be negative")
         self.entrance_key = entrance_key
         self.room_slave_addresses = dict(room_slave_addresses)
         self.client = client
+        self.operation_timeout_seconds = operation_timeout_seconds
+        self.max_operation_attempts = max_operation_attempts
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self.readback_attempts = readback_attempts
+        self.readback_delay_seconds = readback_delay_seconds
+        self._bus_lock = asyncio.Lock()
+        self._latest_intent_versions: dict[str, int] = {}
 
-    def apply_intent(self, intent: DesiredRoomIntent) -> IntentExecutionResult:
-        now = datetime.now(UTC)
+    async def apply_intent(self, intent: DesiredRoomIntent) -> IntentExecutionResult:
+        async with self._bus_lock:
+            return await self._apply_intent_serialized(intent)
+
+    async def _apply_intent_serialized(
+        self,
+        intent: DesiredRoomIntent,
+    ) -> IntentExecutionResult:
         slave_address = self.room_slave_addresses.get(intent.room_key)
         if slave_address is None:
-            return IntentExecutionResult(
-                room_key=intent.room_key,
-                intent_version=intent.intent_version,
+            return self._result(
+                intent,
                 status="skipped",
                 message="room has no configured G301 slave address for this entrance",
-                applied_at=now,
-                correlation_id=intent.correlation_id,
+            )
+
+        latest_version = self._latest_intent_versions.get(intent.room_key)
+        if latest_version is not None and intent.intent_version <= latest_version:
+            return self._result(
+                intent,
+                status="stale",
+                message=(
+                    f"intent version is not newer than already consumed version {latest_version}"
+                ),
+            )
+        self._latest_intent_versions[intent.room_key] = intent.intent_version
+
+        try:
+            profile = None
+            if intent.hvac.enabled and intent.hvac.mode != ManualHvacMode.OFF:
+                profile = await self._read_device_profile(slave_address)
+            plan = plan_room_intent(
+                intent,
+                slave_address=slave_address,
+                device_profile=profile,
+            )
+        except G301PlanningError as exc:
+            return self._result(intent, status="rejected", message=str(exc))
+        except (ValueError, G301TransportError) as exc:
+            return self._transport_failure_result(intent, exc)
+
+        completed_writes: list[RegisterWriteResult] = []
+        try:
+            for write in plan.writes:
+                await self._write_one(slave_address, write)
+                completed_writes.append(
+                    RegisterWriteResult(address=f"0x{write.address:04X}", value=write.value)
+                )
+        except G301TransportError as exc:
+            return self._transport_failure_result(
+                intent,
+                exc,
+                register_writes=completed_writes,
             )
 
         try:
-            plan = plan_room_intent(intent, slave_address=slave_address)
-        except G301PlanningError as exc:
-            return IntentExecutionResult(
-                room_key=intent.room_key,
-                intent_version=intent.intent_version,
-                status="failed",
-                message=str(exc),
-                applied_at=now,
-                correlation_id=intent.correlation_id,
+            observed = await self._readback(plan)
+        except G301TransportError as exc:
+            return self._result(
+                intent,
+                status="applied_unconfirmed",
+                message=f"writes completed but status verification failed: {exc}",
+                register_writes=completed_writes,
             )
 
-        for write in plan.writes:
-            self.client.write_register(write.address, write.value)
-        observed = {
-            address: self.client.read_holding_registers(address, 1)[0]
-            for address in plan.expected_readback
-        }
         mismatches = compare_readback(plan, observed)
-        status = "readback_mismatch" if mismatches else "applied"
-        return IntentExecutionResult(
-            room_key=intent.room_key,
-            intent_version=intent.intent_version,
-            status=status,
-            message=None if not mismatches else "G301 readback did not match planned writes",
-            applied_at=now,
-            register_writes=[
-                RegisterWriteResult(address=f"0x{write.address:04X}", value=write.value)
-                for write in plan.writes
-            ],
+        return self._result(
+            intent,
+            status="readback_mismatch" if mismatches else "applied",
+            message=None if not mismatches else "G301 actual state did not match the desired state",
+            register_writes=completed_writes,
             mismatches={
                 f"0x{mismatch.address:04X}": {
                     "expected": mismatch.expected,
                     "observed": mismatch.observed,
+                    "description": mismatch.description,
                 }
                 for mismatch in mismatches
             },
+        )
+
+    async def _write_one(self, slave_address: int, write: RegisterWrite) -> None:
+        await self._with_retry(
+            lambda: self.client.write_register(
+                slave_address=slave_address,
+                address=write.address,
+                value=write.value,
+            )
+        )
+
+    async def _read_device_profile(self, slave_address: int) -> G301DeviceProfile:
+        capabilities_raw = await self._read_one(slave_address, G301Register.CAPABILITIES)
+        limits = await self._with_retry(
+            lambda: self.client.read_holding_registers(
+                slave_address=slave_address,
+                address=G301Register.MODE_LIMITATION,
+                count=3,
+            )
+        )
+        if len(limits) != 3:
+            raise G301ProtocolError("G301 limit read returned an incomplete response")
+        try:
+            return build_device_profile(
+                capabilities_raw=capabilities_raw,
+                mode_limitation_raw=limits[0],
+                upper_temperature_raw=limits[1],
+                lower_temperature_raw=limits[2],
+            )
+        except ValueError as exc:
+            raise G301PlanningError(str(exc)) from exc
+
+    async def _readback(self, plan: G301Plan) -> dict[int, int]:
+        observed: dict[int, int] = {}
+        for attempt in range(self.readback_attempts):
+            observed = {
+                expectation.address: await self._read_one(
+                    plan.slave_address,
+                    expectation.address,
+                )
+                for expectation in plan.readback_expectations
+            }
+            if not compare_readback(plan, observed):
+                return observed
+            if attempt + 1 < self.readback_attempts and self.readback_delay_seconds:
+                await asyncio.sleep(self.readback_delay_seconds)
+        return observed
+
+    async def _read_one(self, slave_address: int, address: int) -> int:
+        values = await self._with_retry(
+            lambda: self.client.read_holding_registers(
+                slave_address=slave_address,
+                address=address,
+                count=1,
+            )
+        )
+        if len(values) != 1:
+            raise G301ProtocolError("G301 register read returned an incomplete response")
+        return values[0]
+
+    async def _with_retry(self, operation: Callable[[], Awaitable[T]]) -> T:
+        last_error: G301TransportError | None = None
+        for attempt in range(self.max_operation_attempts):
+            try:
+                return await asyncio.wait_for(
+                    operation(),
+                    timeout=self.operation_timeout_seconds,
+                )
+            except TimeoutError as exc:
+                last_error = G301TransportTimeout("G301 operation timed out")
+                last_error.__cause__ = exc
+            except G301TransportError as exc:
+                last_error = exc
+                if not exc.retryable:
+                    raise
+            if attempt + 1 < self.max_operation_attempts and self.retry_backoff_seconds:
+                await asyncio.sleep(self.retry_backoff_seconds * (2**attempt))
+        assert last_error is not None
+        raise last_error
+
+    def _transport_failure_result(
+        self,
+        intent: DesiredRoomIntent,
+        exc: Exception,
+        *,
+        register_writes: list[RegisterWriteResult] | None = None,
+    ) -> IntentExecutionResult:
+        if isinstance(exc, G301DeviceOffline):
+            status = "device_offline"
+        elif isinstance(exc, G301TransportTimeout):
+            status = "timeout"
+        elif isinstance(exc, G301ModbusException):
+            status = "modbus_exception"
+        elif isinstance(exc, G301PlanningError | ValueError):
+            status = "rejected"
+        else:
+            status = "failed"
+        return self._result(
+            intent,
+            status=status,
+            message=str(exc),
+            register_writes=register_writes,
+        )
+
+    @staticmethod
+    def _result(
+        intent: DesiredRoomIntent,
+        *,
+        status: str,
+        message: str | None,
+        register_writes: list[RegisterWriteResult] | None = None,
+        mismatches: dict[str, dict[str, int | str | None]] | None = None,
+    ) -> IntentExecutionResult:
+        return IntentExecutionResult(
+            room_key=intent.room_key,
+            intent_version=intent.intent_version,
+            status=status,
+            message=message,
+            applied_at=datetime.now(UTC),
+            register_writes=register_writes or [],
+            mismatches=mismatches or {},
             correlation_id=intent.correlation_id,
         )

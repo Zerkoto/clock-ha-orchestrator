@@ -212,21 +212,40 @@ def entrance_discovery_configs(
         sensors = {
             "adapter_status": ("Adapter Status", "{{ value_json.status }}"),
             "last_poll": ("Last Poll", "{{ value_json.last_poll_at }}"),
+            "last_successful_poll": (
+                "Last Successful Poll",
+                "{{ value_json.last_successful_poll_at }}",
+            ),
             "room_mismatches": ("Room Mismatches", "{{ value_json.room_mismatches }}"),
+            "gateway_latency": ("Gateway Latency", "{{ value_json.gateway_latency_ms }}"),
+            "consecutive_failures": (
+                "Consecutive Failures",
+                "{{ value_json.consecutive_failures }}",
+            ),
+            "online_slaves": ("Online Slaves", "{{ value_json.online_slaves }}"),
+            "offline_slaves": ("Offline Slaves", "{{ value_json.offline_slaves }}"),
+            "scan_duration": ("Scan Duration", "{{ value_json.scan_duration_ms }}"),
+            "command_queue_depth": (
+                "Command Queue Depth",
+                "{{ value_json.command_queue_depth }}",
+            ),
         }
         for suffix, (name, template) in sensors.items():
             object_id = f"{object_prefix}_{suffix}"
+            config = {
+                "name": name,
+                "object_id": object_id,
+                "unique_id": f"clock_{object_id}",
+                "state_topic": state_topic,
+                "value_template": template,
+                "device": device,
+                **availability,
+            }
+            if suffix in {"gateway_latency", "scan_duration"}:
+                config["unit_of_measurement"] = "ms"
             yield (
                 discovery_topic("sensor", object_id),
-                {
-                    "name": name,
-                    "object_id": object_id,
-                    "unique_id": f"clock_{object_id}",
-                    "state_topic": state_topic,
-                    "value_template": template,
-                    "device": device,
-                    **availability,
-                },
+                config,
             )
         binary_sensors = {
             "adapter_online": "{{ value_json.adapter_online }}",

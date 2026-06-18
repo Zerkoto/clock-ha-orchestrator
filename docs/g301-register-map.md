@@ -48,3 +48,16 @@ The repository currently implements only offline codecs, planning, readback
 comparison and simulation. Live gateway transport, polling intervals, write
 ordering under real bus contention and final room-to-slave assignment must wait
 for bench commissioning.
+
+The offline contract verifies power and mode against actual status registers:
+
+| Control write | Verification read |
+| --- | --- |
+| `0x0201` power | `0x030F` actual power |
+| `0x0202` mode | `0x0310` actual operating mode |
+| `0x0203` setpoint | `0x0203` accepted setpoint |
+| `0x0204` fan | `0x0311` actual fan status |
+
+Enabled intents first read `0x030E` and `0x0214-0x0216`. Invalid mode
+limitations or device temperature bounds reject the intent before any write.
+Readback is deliberately retryable because status may lag command acceptance.

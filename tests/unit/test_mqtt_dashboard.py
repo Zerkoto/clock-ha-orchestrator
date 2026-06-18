@@ -68,6 +68,9 @@ def test_entrance_discovery_contains_gateway_and_adapter_health() -> None:
     assert adapter["state_topic"] == "hotel/v1/entrances/entrance_a/adapter/state"
     assert adapter["availability_topic"] == ("hotel/v1/entrances/entrance_a/adapter/availability")
     assert "homeassistant/sensor/entrance_entrance_a_room_mismatches/config" in configs
+    latency = configs["homeassistant/sensor/entrance_entrance_a_gateway_latency/config"]
+    assert latency["unit_of_measurement"] == "ms"
+    assert "homeassistant/sensor/entrance_entrance_a_command_queue_depth/config" in configs
 
 
 def test_system_discovery_contains_online_sensor() -> None:

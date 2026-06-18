@@ -138,9 +138,21 @@ Adapters publish retained actual room state without guest PII:
   },
   "ambient_temperature_c": 21.4,
   "faults": [],
+  "device_model": "confirmed-model-id",
+  "firmware_version": "confirmed-firmware-id",
+  "capability_profile": {"access_control": true},
+  "last_successful_command_version": 17,
+  "local_change_detected": false,
   "correlation_id": "00000000-0000-0000-0000-000000000000"
 }
 ```
+
+Final execution statuses are `applied`, `applied_unconfirmed`, `rejected`,
+`timeout`, `modbus_exception`, `readback_mismatch`, `device_offline`, `stale`,
+`failed` or `skipped`. `accepted`, `queued` and `writing` are available for
+intermediate event streams. `applied_unconfirmed` means writes completed but
+actual-state verification could not complete; it must not be presented as
+confirmed success.
 
 Adapters publish execution results for each consumed intent:
 
@@ -173,6 +185,15 @@ Entrance adapter health is published under:
   "gateway_online": true,
   "room_mismatches": 0,
   "last_poll_at": "2026-12-20T10:05:01+00:00",
+  "last_successful_poll_at": "2026-12-20T10:05:01+00:00",
+  "gateway_latency_ms": 42.3,
+  "consecutive_failures": 0,
+  "last_modbus_exception": null,
+  "configured_slaves": 55,
+  "online_slaves": 54,
+  "offline_slaves": 1,
+  "scan_duration_ms": 18350.0,
+  "command_queue_depth": 0,
   "updated_at": "2026-12-20T10:05:01+00:00"
 }
 ```

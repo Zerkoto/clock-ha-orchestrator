@@ -8,8 +8,9 @@ This service treats Clock PMS+ as the source of truth for reservations and physi
 
 - No Booking.com API client.
 - No live iNELS, RFTC-6, MUK, relay, Modbus, G301, or other hardware execution
-  in Version 1. The repository includes offline G301 Version G codecs, planning,
-  readback comparison and simulator scaffolding only.
+  in Version 1. The repository includes an offline, slave-aware G301 Version G
+  contract with capability validation, status-register verification, bounded
+  async retries and a multi-device entrance simulator only.
 - Clock endpoint paths and payload mappings are not guessed. The live adapter is gated until official docs or sandbox payloads confirm the mapping.
 - Guest PII and payment data are intentionally excluded from normalized persistence, MQTT, logs, and dashboards.
 
@@ -63,6 +64,10 @@ field command topics, generates server-side command IDs, audits accepted and
 rejected manual override commands, publishes retained `control/state`, and
 reevaluates the affected room through the same transactional outbox path as
 Clock sync.
+
+The future G301 process is intentionally not enabled by a FastAPI setting. It
+will be a separately runnable service with its own OT-network configuration once
+the gateway mode and bench behavior are confirmed.
 
 Timed and until-checkout manual overrides naturally return to automatic during
 policy evaluation and publish default retained `control/state`. The generated
