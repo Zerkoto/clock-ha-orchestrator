@@ -19,7 +19,13 @@ def now() -> datetime:
 
 @pytest.fixture
 def room_214() -> Room:
-    return Room(key="214", name="Apartment 214", floor="2", clock_room_id="clock-room-214")
+    return Room(
+        key="214",
+        name="Apartment 214",
+        entrance_key="entrance_a",
+        floor="2",
+        clock_room_id="clock-room-214",
+    )
 
 
 def booking(

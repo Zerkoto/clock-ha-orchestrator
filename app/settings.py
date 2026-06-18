@@ -56,6 +56,10 @@ class Settings(BaseSettings):
 
     room_registry_path: Path = Path("config/rooms.example.yaml")
     policy_path: Path = Path("config/policies.example.yaml")
+    reported_state_stale_seconds: int = Field(default=300, ge=30)
+    adapter_state_stale_seconds: int = Field(default=120, ge=10)
+    g301_adapter_enabled: bool = False
+    g301_gateway_timeout_seconds: int = Field(default=5, ge=1)
 
     @field_validator("clock_base_url")
     @classmethod

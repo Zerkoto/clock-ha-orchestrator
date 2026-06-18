@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.clock.db_sync import ClockDbSyncService
 from app.clock.sync import SyncCursorState, SyncRunResult
 from app.domain.enums import AutomationPhase, BookingStatus, ControlMode, ManualHvacMode
-from app.domain.models import PropertyRegistry, Room, RoomRegistry
+from app.domain.models import Entrance, PropertyRegistry, Room, RoomRegistry
 from app.persistence import models as db
 from app.policy.control import RoomControlCommandService
 from tests.conftest import booking
@@ -38,9 +38,22 @@ def engine() -> Engine:
 def registry() -> RoomRegistry:
     return RoomRegistry(
         property=PropertyRegistry(key="local_stay_razlog", name="Local Stay Hotel & Suites"),
+        entrances=[Entrance(key="entrance_a", name="Entrance A")],
         rooms=[
-            Room(key="214", name="Apartment 214", floor="2", clock_room_id="clock-room-214"),
-            Room(key="215", name="Apartment 215", floor="2", clock_room_id="clock-room-215"),
+            Room(
+                key="214",
+                name="Apartment 214",
+                entrance_key="entrance_a",
+                floor="2",
+                clock_room_id="clock-room-214",
+            ),
+            Room(
+                key="215",
+                name="Apartment 215",
+                entrance_key="entrance_a",
+                floor="2",
+                clock_room_id="clock-room-215",
+            ),
         ],
     )
 

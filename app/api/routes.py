@@ -125,7 +125,7 @@ async def reconcile(
 
 @router.get("/api/v1/rooms")
 def rooms(session: SessionDep) -> list[dict[str, Any]]:
-    rows = session.execute(select(db.Room).order_by(db.Room.floor, db.Room.key)).scalars()
+    rows = session.execute(select(db.Room).order_by(db.Room.entrance_key, db.Room.key)).scalars()
     return [_room_payload(row) for row in rows]
 
 
@@ -194,6 +194,7 @@ def _room_payload(row: db.Room) -> dict[str, Any]:
         "id": str(row.id),
         "key": row.key,
         "name": row.name,
+        "entrance_key": row.entrance_key,
         "floor": row.floor,
         "clock_room_id": row.clock_room_id,
         "enabled": row.enabled,

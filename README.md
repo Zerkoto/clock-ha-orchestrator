@@ -7,7 +7,9 @@ This service treats Clock PMS+ as the source of truth for reservations and physi
 ## Scope
 
 - No Booking.com API client.
-- No direct iNELS, RFTC-6, MUK, relay, Modbus, G301, or other hardware implementation in Version 1.
+- No live iNELS, RFTC-6, MUK, relay, Modbus, G301, or other hardware execution
+  in Version 1. The repository includes offline G301 Version G codecs, planning,
+  readback comparison and simulator scaffolding only.
 - Clock endpoint paths and payload mappings are not guessed. The live adapter is gated until official docs or sandbox payloads confirm the mapping.
 - Guest PII and payment data are intentionally excluded from normalized persistence, MQTT, logs, and dashboards.
 
@@ -64,8 +66,10 @@ Clock sync.
 
 Timed and until-checkout manual overrides naturally return to automatic during
 policy evaluation and publish default retained `control/state`. The generated
-Reception dashboard surfaces arrivals, departures, active manual overrides,
-rooms needing attention, runtime readiness, MQTT connection and outbox health.
+Reception dashboard is entrance-grouped and surfaces arrivals, departures,
+active manual overrides, rooms needing attention, runtime readiness, MQTT
+connection, outbox health, adapter/gateway health and desired-versus-reported
+room state.
 
 Generate the Home Assistant dashboard with:
 

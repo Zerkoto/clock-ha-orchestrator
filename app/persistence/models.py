@@ -48,7 +48,8 @@ class Room(Base):
     property_id: Mapped[UUID] = mapped_column(ForeignKey("properties.id"))
     key: Mapped[str] = mapped_column(String(80))
     name: Mapped[str] = mapped_column(String(255))
-    floor: Mapped[str] = mapped_column(String(80))
+    entrance_key: Mapped[str] = mapped_column(String(120))
+    floor: Mapped[str | None] = mapped_column(String(80), nullable=True)
     clock_room_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 

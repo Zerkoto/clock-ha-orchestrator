@@ -40,12 +40,21 @@ Regenerate and install the dashboard:
 ```
 
 Copy or mount the generated YAML to `/config/dashboards/hotel-reception.yaml`.
+The dashboard is grouped by entrance, not by floor. Floor remains optional
+display metadata in the registry.
 
 Manual override controls publish only to the field-specific
 `hotel/v1/rooms/{room_key}/control/.../set` topics. The orchestrator generates
 server-side command IDs, audits accepted and rejected commands, and publishes
 retained `control/state`. Use the dashboard controls; do not publish directly
 to future hardware adapter topics.
+
+Adapter-reported room state appears under
+`hotel/v1/rooms/{room_key}/reported/state`, execution results under
+`hotel/v1/rooms/{room_key}/intent/result`, and entrance adapter health under
+`hotel/v1/entrances/{entrance_key}/adapter/state`. The orchestrator publishes
+Discovery metadata for these entities, but the adapter is responsible for the
+actual state payloads.
 
 Keep the policy scheduler enabled in production. It is responsible for natural
 time transitions, including manual override expiry and until-checkout return to
@@ -66,6 +75,21 @@ docker run --rm -it -v "$PWD/mosquitto/config:/config" eclipse-mosquitto:2 \
 
 Add separate users for Home Assistant and future adapters. Do not commit the
 generated `mosquitto/config/passwords` or `mosquitto/config/acl` files.
+Use the adapter ACL entries for reported state, intent results and entrance
+health. Do not grant future hardware adapters broad write access unless a
+specific commissioning exception is documented.
+
+## G301 Adapter
+
+The repository includes offline G301 Version G codecs, planning, readback
+comparison and a simulator. Do not enable live G301 execution until the project
+confirms:
+
+- official entrance names and exact room membership
+- gateway host/port and network route per entrance
+- G301 slave address per room
+- bench-tested read/write/readback behavior for one real device
+- approved polling interval, timeout and retry policy
 
 ## Backups
 

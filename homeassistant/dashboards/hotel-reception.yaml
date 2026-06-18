@@ -170,13 +170,21 @@ views:
       - sensor.clock_sync_lag
       - sensor.clock_pending_outbox
       - sensor.clock_dead_letter_outbox
-- title: Floor 1
+- title: Entrance A
   type: sections
   sections:
   - type: grid
     cards:
     - type: heading
-      heading: Floor 1
+      heading: Entrance A
+    - type: entities
+      title: Gateway and Adapter
+      entities:
+      - sensor.entrance_entrance_a_adapter_status
+      - binary_sensor.entrance_entrance_a_adapter_online
+      - binary_sensor.entrance_entrance_a_gateway_online
+      - sensor.entrance_entrance_a_last_poll
+      - sensor.entrance_entrance_a_room_mismatches
     - type: entities
       title: Room 101
       entities:
@@ -187,6 +195,11 @@ views:
       - sensor.room_101_desired_hvac_mode
       - sensor.room_101_desired_temperature
       - sensor.room_101_desired_water_heater
+      - sensor.room_101_reported_hvac_mode
+      - sensor.room_101_reported_temperature
+      - sensor.room_101_reported_faults
+      - sensor.room_101_reported_at
+      - binary_sensor.room_101_reported_online
       - select.room_101_control_mode
       - select.room_101_manual_hvac_mode
       - number.room_101_manual_temperature
@@ -204,6 +217,11 @@ views:
       - sensor.room_102_desired_hvac_mode
       - sensor.room_102_desired_temperature
       - sensor.room_102_desired_water_heater
+      - sensor.room_102_reported_hvac_mode
+      - sensor.room_102_reported_temperature
+      - sensor.room_102_reported_faults
+      - sensor.room_102_reported_at
+      - binary_sensor.room_102_reported_online
       - select.room_102_control_mode
       - select.room_102_manual_hvac_mode
       - number.room_102_manual_temperature
@@ -211,13 +229,6 @@ views:
       - switch.room_102_manual_water_heater
       - button.room_102_return_to_automatic
       - binary_sensor.room_102_needs_attention
-- title: Floor 2
-  type: sections
-  sections:
-  - type: grid
-    cards:
-    - type: heading
-      heading: Floor 2
     - type: entities
       title: Room 214
       entities:
@@ -228,6 +239,11 @@ views:
       - sensor.room_214_desired_hvac_mode
       - sensor.room_214_desired_temperature
       - sensor.room_214_desired_water_heater
+      - sensor.room_214_reported_hvac_mode
+      - sensor.room_214_reported_temperature
+      - sensor.room_214_reported_faults
+      - sensor.room_214_reported_at
+      - binary_sensor.room_214_reported_online
       - select.room_214_control_mode
       - select.room_214_manual_hvac_mode
       - number.room_214_manual_temperature

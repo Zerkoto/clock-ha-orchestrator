@@ -334,6 +334,7 @@ class RoomControlCommandService:
                 property_id=property_row.id,
                 key=room.key,
                 name=room.name,
+                entrance_key=room.entrance_key,
                 floor=room.floor,
                 clock_room_id=room.clock_room_id,
                 enabled=room.enabled,
@@ -342,6 +343,7 @@ class RoomControlCommandService:
             self._session.flush()
         else:
             room_row.name = room.name
+            room_row.entrance_key = room.entrance_key
             room_row.floor = room.floor
             room_row.clock_room_id = room.clock_room_id
             room_row.enabled = room.enabled

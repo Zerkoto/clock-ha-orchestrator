@@ -11,6 +11,8 @@ services:
         condition: service_started
     ports:
       - "8000:8000"
+    networks:
+      - app-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
@@ -27,6 +29,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clock_ha -d clock_ha"]
@@ -42,6 +46,9 @@ services:
       - ./mosquitto/config:/mosquitto/config:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
+    networks:
+      - app-net
+      - ot-net
     restart: unless-stopped
 
   home-assistant:
@@ -54,6 +61,8 @@ services:
       - /etc/localtime:/etc/localtime:ro
     environment:
       TZ: Europe/Sofia
+    networks:
+      - app-net
     restart: unless-stopped
 
 volumes:
@@ -61,3 +70,8 @@ volumes:
   mosquitto-data:
   mosquitto-log:
   homeassistant-config:
+
+networks:
+  app-net:
+  ot-net:
+    internal: true

@@ -25,7 +25,11 @@ from app.clock.sync import ClockSyncService
 from app.config_loader import load_hotel_policy, load_room_registry, load_yaml_model
 from app.domain.models import HotelPolicy, RoomRegistry
 from app.mqtt.client import ManagedMqttClient
-from app.mqtt.discovery import room_discovery_configs, system_discovery_configs
+from app.mqtt.discovery import (
+    entrance_discovery_configs,
+    room_discovery_configs,
+    system_discovery_configs,
+)
 from app.mqtt.publisher import serialize_payload
 from app.mqtt.topics import MqttTopics
 from app.outbox.service import OutboxPublisher, OutboxRetryPolicy, OutboxStore
@@ -281,6 +285,8 @@ class AppRuntime:
         if self.mqtt_client is None or not self.mqtt_client.connected:
             return
         for topic, payload in system_discovery_configs(self.topics):
+            self._publish_direct(topic, serialize_payload(payload))
+        for topic, payload in entrance_discovery_configs(self.registry.entrances, self.topics):
             self._publish_direct(topic, serialize_payload(payload))
         for room in self.registry.rooms:
             for topic, payload in room_discovery_configs(room, self.topics):

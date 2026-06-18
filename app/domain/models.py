@@ -62,13 +62,31 @@ class NormalizedBooking(BaseModel):
         return self.booking_status in {BookingStatus.EXPECTED, BookingStatus.CHECKED_IN}
 
 
+class Entrance(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    name: str
+    gateway_host: str | None = None
+    gateway_port: int | None = Field(default=None, ge=1, le=65535)
+    enabled: bool = True
+
+
+class G301RoomMapping(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    slave_address: int = Field(ge=1, le=255)
+
+
 class Room(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     key: str
     name: str
-    floor: str
+    entrance_key: str
+    floor: str | None = None
     clock_room_id: str | None = None
+    g301: G301RoomMapping | None = None
     enabled: bool = True
 
 
@@ -84,7 +102,32 @@ class PropertyRegistry(BaseModel):
 
 class RoomRegistry(BaseModel):
     property: PropertyRegistry
+    entrances: list[Entrance]
     rooms: list[Room]
+
+    @model_validator(mode="after")
+    def validate_registry(self) -> RoomRegistry:
+        entrance_keys = [entrance.key for entrance in self.entrances]
+        if len(entrance_keys) != len(set(entrance_keys)):
+            raise ValueError("entrance keys must be unique")
+        known_entrances = set(entrance_keys)
+        missing_entrances = sorted(
+            {room.entrance_key for room in self.rooms if room.entrance_key not in known_entrances}
+        )
+        if missing_entrances:
+            raise ValueError(
+                "room entrance_key values must reference configured entrances: "
+                + ", ".join(missing_entrances)
+            )
+
+        g301_addresses = [
+            (room.entrance_key, room.g301.slave_address)
+            for room in self.rooms
+            if room.g301 is not None
+        ]
+        if len(g301_addresses) != len(set(g301_addresses)):
+            raise ValueError("G301 slave addresses must be unique within each entrance")
+        return self
 
     @field_validator("rooms")
     @classmethod
@@ -99,6 +142,15 @@ class RoomRegistry(BaseModel):
 
     def by_key(self) -> dict[str, Room]:
         return {room.key: room for room in self.rooms}
+
+    def rooms_by_entrance(self) -> dict[str, list[Room]]:
+        return {
+            entrance.key: sorted(
+                [room for room in self.rooms if room.entrance_key == entrance.key],
+                key=lambda item: item.key,
+            )
+            for entrance in self.entrances
+        }
 
 
 class PropertyPolicy(BaseModel):

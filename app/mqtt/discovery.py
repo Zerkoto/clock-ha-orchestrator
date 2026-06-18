@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from app.domain.models import Room
+from app.domain.models import Entrance, Room
 from app.mqtt.topics import MqttTopics
 
 
@@ -25,6 +25,8 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
     state_topic = topics.room_pms_state(room.key)
     intent_topic = topics.room_intent_state(room.key)
     control_state_topic = topics.room_control_state(room.key)
+    reported_topic = topics.room_reported_state(room.key)
+    result_topic = topics.room_intent_result(room.key)
     base = f"room_{room.key}"
     availability = {
         "availability_topic": topics.availability,
@@ -48,6 +50,19 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
             intent_topic,
             "{{ value_json.water_heater.enabled }}",
         ),
+        "reported_hvac_mode": ("Reported HVAC Mode", reported_topic, "{{ value_json.hvac.mode }}"),
+        "reported_temperature": (
+            "Reported Temperature",
+            reported_topic,
+            "{{ value_json.ambient_temperature_c }}",
+        ),
+        "reported_faults": (
+            "Reported Faults",
+            reported_topic,
+            "{{ value_json.faults | count }}",
+        ),
+        "reported_at": ("Reported At", reported_topic, "{{ value_json.reported_at }}"),
+        "last_intent_result": ("Last Intent Result", result_topic, "{{ value_json.status }}"),
     }
     for suffix, (name, topic, template) in sensors.items():
         object_id = f"{base}_{suffix}"
@@ -67,8 +82,10 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
     binary_sensors = {
         "reservation_active": "{{ value_json.booking_status in ['expected', 'checked_in'] }}",
         "needs_attention": "{{ value_json.needs_attention }}",
+        "reported_online": "{{ value_json.online }}",
     }
     for suffix, template in binary_sensors.items():
+        binary_state_topic = reported_topic if suffix == "reported_online" else state_topic
         object_id = f"{base}_{suffix}"
         yield (
             discovery_topic("binary_sensor", object_id),
@@ -76,7 +93,7 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
                 "name": suffix.replace("_", " ").title(),
                 "object_id": object_id,
                 "unique_id": f"clock_{object_id}",
-                "state_topic": state_topic,
+                "state_topic": binary_state_topic,
                 "value_template": template,
                 "payload_on": "True",
                 "payload_off": "False",
@@ -171,6 +188,66 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
             **availability,
         },
     )
+
+
+def entrance_discovery_configs(
+    entrances: Iterable[Entrance],
+    topics: MqttTopics,
+) -> Iterable[tuple[str, dict[str, Any]]]:
+    for entrance in entrances:
+        object_prefix = f"entrance_{entrance.key.replace('-', '_')}"
+        state_topic = topics.entrance_adapter_state(entrance.key)
+        availability_topic = topics.entrance_adapter_availability(entrance.key)
+        device = {
+            "identifiers": [f"clock_entrance_{entrance.key}"],
+            "name": entrance.name,
+            "manufacturer": "Clock HA Orchestrator",
+            "model": "G301 Entrance Adapter",
+        }
+        availability = {
+            "availability_topic": availability_topic,
+            "payload_available": "online",
+            "payload_not_available": "offline",
+        }
+        sensors = {
+            "adapter_status": ("Adapter Status", "{{ value_json.status }}"),
+            "last_poll": ("Last Poll", "{{ value_json.last_poll_at }}"),
+            "room_mismatches": ("Room Mismatches", "{{ value_json.room_mismatches }}"),
+        }
+        for suffix, (name, template) in sensors.items():
+            object_id = f"{object_prefix}_{suffix}"
+            yield (
+                discovery_topic("sensor", object_id),
+                {
+                    "name": name,
+                    "object_id": object_id,
+                    "unique_id": f"clock_{object_id}",
+                    "state_topic": state_topic,
+                    "value_template": template,
+                    "device": device,
+                    **availability,
+                },
+            )
+        binary_sensors = {
+            "adapter_online": "{{ value_json.adapter_online }}",
+            "gateway_online": "{{ value_json.gateway_online }}",
+        }
+        for suffix, template in binary_sensors.items():
+            object_id = f"{object_prefix}_{suffix}"
+            yield (
+                discovery_topic("binary_sensor", object_id),
+                {
+                    "name": suffix.replace("_", " ").title(),
+                    "object_id": object_id,
+                    "unique_id": f"clock_{object_id}",
+                    "state_topic": state_topic,
+                    "value_template": template,
+                    "payload_on": "True",
+                    "payload_off": "False",
+                    "device": device,
+                    **availability,
+                },
+            )
 
 
 def system_discovery_configs(topics: MqttTopics) -> Iterable[tuple[str, dict[str, Any]]]:

@@ -85,6 +85,7 @@ def test_system_state_uses_single_latest_room_state_when_timestamps_tie() -> Non
                 property_id=property_id,
                 key="214",
                 name="Apartment 214",
+                entrance_key="entrance_a",
                 floor="2",
             )
         )

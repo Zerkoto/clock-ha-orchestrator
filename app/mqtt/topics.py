@@ -24,6 +24,9 @@ class MqttTopics:
     def room_intent_state(self, room_key: str) -> str:
         return f"{self.prefix}/rooms/{room_key}/intent/state"
 
+    def room_intent_result(self, room_key: str) -> str:
+        return f"{self.prefix}/rooms/{room_key}/intent/result"
+
     def room_control_set(self, room_key: str) -> str:
         return f"{self.prefix}/rooms/{room_key}/control/set"
 
@@ -50,3 +53,9 @@ class MqttTopics:
 
     def room_reported_state(self, room_key: str) -> str:
         return f"{self.prefix}/rooms/{room_key}/reported/state"
+
+    def entrance_adapter_availability(self, entrance_key: str) -> str:
+        return f"{self.prefix}/entrances/{entrance_key}/adapter/availability"
+
+    def entrance_adapter_state(self, entrance_key: str) -> str:
+        return f"{self.prefix}/entrances/{entrance_key}/adapter/state"

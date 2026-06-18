@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
-from app.domain.models import RoomRegistry
+from app.domain.models import Entrance, RoomRegistry
 
 
 def generate_dashboard(registry: RoomRegistry) -> dict[str, Any]:
     room_keys = [
-        room.key for room in sorted(registry.rooms, key=lambda item: (item.floor, item.key))
+        room.key for room in sorted(registry.rooms, key=lambda item: (item.entrance_key, item.key))
     ]
     views: list[dict[str, Any]] = [
         _overview_view(),
@@ -18,11 +17,10 @@ def generate_dashboard(registry: RoomRegistry) -> dict[str, Any]:
         _alerts_view(),
         _integration_view(),
     ]
-    floors: dict[str, list[str]] = defaultdict(list)
-    for room in sorted(registry.rooms, key=lambda item: (item.floor, item.key)):
-        floors[room.floor].append(room.key)
-    for floor, room_keys in floors.items():
-        views.append(_floor_view(floor, room_keys))
+    rooms_by_entrance = registry.rooms_by_entrance()
+    for entrance in registry.entrances:
+        entrance_room_keys = [room.key for room in rooms_by_entrance.get(entrance.key, [])]
+        views.append(_entrance_view(entrance, entrance_room_keys))
     return {
         "title": f"{registry.property.name} Reception",
         "views": views,
@@ -179,11 +177,25 @@ def _integration_view() -> dict[str, Any]:
     )
 
 
-def _floor_view(floor: str, room_keys: list[str]) -> dict[str, Any]:
-    cards: list[dict[str, Any]] = [{"type": "heading", "heading": f"Floor {floor}"}]
+def _entrance_view(entrance: Entrance, room_keys: list[str]) -> dict[str, Any]:
+    prefix = _entrance_prefix(entrance.key)
+    cards: list[dict[str, Any]] = [
+        {"type": "heading", "heading": entrance.name},
+        {
+            "type": "entities",
+            "title": "Gateway and Adapter",
+            "entities": [
+                f"sensor.{prefix}_adapter_status",
+                f"binary_sensor.{prefix}_adapter_online",
+                f"binary_sensor.{prefix}_gateway_online",
+                f"sensor.{prefix}_last_poll",
+                f"sensor.{prefix}_room_mismatches",
+            ],
+        },
+    ]
     for room_key in room_keys:
         cards.append(_room_card(room_key))
-    return _sections_view(f"Floor {floor}", cards)
+    return _sections_view(entrance.name, cards)
 
 
 def _room_card(room_key: str) -> dict[str, Any]:
@@ -199,6 +211,11 @@ def _room_card(room_key: str) -> dict[str, Any]:
             f"sensor.{prefix}_desired_hvac_mode",
             f"sensor.{prefix}_desired_temperature",
             f"sensor.{prefix}_desired_water_heater",
+            f"sensor.{prefix}_reported_hvac_mode",
+            f"sensor.{prefix}_reported_temperature",
+            f"sensor.{prefix}_reported_faults",
+            f"sensor.{prefix}_reported_at",
+            f"binary_sensor.{prefix}_reported_online",
             f"select.{prefix}_control_mode",
             f"select.{prefix}_manual_hvac_mode",
             f"number.{prefix}_manual_temperature",
@@ -238,3 +255,7 @@ def _sections_view(title: str, cards: list[dict[str, Any]]) -> dict[str, Any]:
             }
         ],
     }
+
+
+def _entrance_prefix(entrance_key: str) -> str:
+    return f"entrance_{entrance_key.replace('-', '_')}"
