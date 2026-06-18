@@ -154,6 +154,11 @@ intermediate event streams. `applied_unconfirmed` means writes completed but
 actual-state verification could not complete; it must not be presented as
 confirmed success.
 
+`stale` means the received version is lower than the adapter's highest seen
+version. Equal-version MQTT redelivery is not stale: retryable work resumes,
+uncertain writes are verified before rewriting, and terminal results are
+replayed. The same version with a different semantic payload is rejected.
+
 Adapters publish execution results for each consumed intent:
 
 ```json

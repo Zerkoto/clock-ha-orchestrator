@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TypeVar
 
 from app.domain.enums import ManualHvacMode
@@ -26,6 +30,39 @@ from app.g301_adapter.transport import (
 from app.mqtt.schemas import IntentExecutionResult, RegisterWriteResult
 
 T = TypeVar("T")
+
+
+class IntentAttemptPhase(StrEnum):
+    RETRYABLE = "retryable"
+    WRITING = "writing"
+    VERIFICATION_PENDING = "verification_pending"
+    TERMINAL = "terminal"
+
+
+@dataclass(frozen=True)
+class IntentVersionState:
+    last_seen_version: int | None = None
+    last_terminal_version: int | None = None
+    last_applied_version: int | None = None
+    current_phase: IntentAttemptPhase | None = None
+
+
+@dataclass
+class _IntentAttempt:
+    version: int
+    payload_fingerprint: str
+    phase: IntentAttemptPhase = IntentAttemptPhase.RETRYABLE
+    plan: G301Plan | None = None
+    completed_writes: list[RegisterWriteResult] = field(default_factory=list)
+    cached_result: IntentExecutionResult | None = None
+
+
+@dataclass
+class _RoomIntentState:
+    last_seen_version: int | None = None
+    last_terminal_version: int | None = None
+    last_applied_version: int | None = None
+    current_attempt: _IntentAttempt | None = None
 
 
 class G301EntranceWorker:
@@ -58,7 +95,20 @@ class G301EntranceWorker:
         self.readback_attempts = readback_attempts
         self.readback_delay_seconds = readback_delay_seconds
         self._bus_lock = asyncio.Lock()
-        self._latest_intent_versions: dict[str, int] = {}
+        self._intent_states: dict[str, _RoomIntentState] = {}
+
+    def intent_version_state(self, room_key: str) -> IntentVersionState:
+        state = self._intent_states.get(room_key)
+        if state is None:
+            return IntentVersionState()
+        return IntentVersionState(
+            last_seen_version=state.last_seen_version,
+            last_terminal_version=state.last_terminal_version,
+            last_applied_version=state.last_applied_version,
+            current_phase=(
+                state.current_attempt.phase if state.current_attempt is not None else None
+            ),
+        )
 
     async def apply_intent(self, intent: DesiredRoomIntent) -> IntentExecutionResult:
         async with self._bus_lock:
@@ -76,17 +126,66 @@ class G301EntranceWorker:
                 message="room has no configured G301 slave address for this entrance",
             )
 
-        latest_version = self._latest_intent_versions.get(intent.room_key)
-        if latest_version is not None and intent.intent_version <= latest_version:
+        state = self._intent_states.setdefault(intent.room_key, _RoomIntentState())
+        fingerprint = _intent_fingerprint(intent)
+        if state.last_seen_version is not None and intent.intent_version < state.last_seen_version:
             return self._result(
                 intent,
                 status="stale",
-                message=(
-                    f"intent version is not newer than already consumed version {latest_version}"
-                ),
+                message=f"intent version is older than seen version {state.last_seen_version}",
             )
-        self._latest_intent_versions[intent.room_key] = intent.intent_version
 
+        if state.last_seen_version is None or intent.intent_version > state.last_seen_version:
+            state.last_seen_version = intent.intent_version
+            state.current_attempt = _IntentAttempt(
+                version=intent.intent_version,
+                payload_fingerprint=fingerprint,
+            )
+        else:
+            attempt = state.current_attempt
+            if attempt is None or attempt.version != intent.intent_version:
+                raise RuntimeError("G301 intent version state is inconsistent")
+            if attempt.payload_fingerprint != fingerprint:
+                return self._result(
+                    intent,
+                    status="rejected",
+                    message="same intent version was received with a different payload",
+                )
+            if attempt.phase == IntentAttemptPhase.TERMINAL:
+                assert attempt.cached_result is not None
+                return attempt.cached_result.model_copy(
+                    update={"correlation_id": intent.correlation_id}
+                )
+            if attempt.phase in {
+                IntentAttemptPhase.WRITING,
+                IntentAttemptPhase.VERIFICATION_PENDING,
+            }:
+                return await self._resume_verification(
+                    intent,
+                    slave_address=slave_address,
+                    state=state,
+                    attempt=attempt,
+                )
+
+        assert state.current_attempt is not None
+        return await self._execute_intent(
+            intent,
+            slave_address=slave_address,
+            state=state,
+            attempt=state.current_attempt,
+        )
+
+    async def _execute_intent(
+        self,
+        intent: DesiredRoomIntent,
+        *,
+        slave_address: int,
+        state: _RoomIntentState,
+        attempt: _IntentAttempt,
+    ) -> IntentExecutionResult:
+        attempt.phase = IntentAttemptPhase.RETRYABLE
+        attempt.plan = None
+        attempt.completed_writes.clear()
         try:
             profile = None
             if intent.hvac.enabled and intent.hvac.mode != ManualHvacMode.OFF:
@@ -97,40 +196,104 @@ class G301EntranceWorker:
                 device_profile=profile,
             )
         except G301PlanningError as exc:
-            return self._result(intent, status="rejected", message=str(exc))
-        except (ValueError, G301TransportError) as exc:
-            return self._transport_failure_result(intent, exc)
+            result = self._result(intent, status="rejected", message=str(exc))
+            return self._mark_terminal(state, attempt, result)
+        except ValueError as exc:
+            result = self._transport_failure_result(intent, exc)
+            return self._mark_terminal(state, attempt, result)
+        except G301TransportError as exc:
+            result = self._transport_failure_result(intent, exc)
+            if not exc.retryable:
+                return self._mark_terminal(state, attempt, result)
+            return result
 
-        completed_writes: list[RegisterWriteResult] = []
+        attempt.plan = plan
+        attempt.phase = IntentAttemptPhase.WRITING
         try:
             for write in plan.writes:
                 await self._write_one(slave_address, write)
-                completed_writes.append(
+                attempt.completed_writes.append(
                     RegisterWriteResult(address=f"0x{write.address:04X}", value=write.value)
                 )
         except G301TransportError as exc:
-            return self._transport_failure_result(
+            result = self._transport_failure_result(
                 intent,
                 exc,
-                register_writes=completed_writes,
+                register_writes=attempt.completed_writes,
             )
+            if not exc.retryable:
+                return self._mark_terminal(state, attempt, result)
+            attempt.phase = IntentAttemptPhase.VERIFICATION_PENDING
+            return result
 
+        attempt.phase = IntentAttemptPhase.VERIFICATION_PENDING
+        verification_result = await self._verify_attempt(intent, state=state, attempt=attempt)
+        assert verification_result is not None
+        return verification_result
+
+    async def _resume_verification(
+        self,
+        intent: DesiredRoomIntent,
+        *,
+        slave_address: int,
+        state: _RoomIntentState,
+        attempt: _IntentAttempt,
+    ) -> IntentExecutionResult:
+        if attempt.plan is None:
+            attempt.phase = IntentAttemptPhase.RETRYABLE
+            return await self._execute_intent(
+                intent,
+                slave_address=slave_address,
+                state=state,
+                attempt=attempt,
+            )
+        result = await self._verify_attempt(
+            intent,
+            state=state,
+            attempt=attempt,
+            terminal_on_mismatch=False,
+        )
+        if result is not None:
+            return result
+
+        attempt.phase = IntentAttemptPhase.RETRYABLE
+        return await self._execute_intent(
+            intent,
+            slave_address=slave_address,
+            state=state,
+            attempt=attempt,
+        )
+
+    async def _verify_attempt(
+        self,
+        intent: DesiredRoomIntent,
+        *,
+        state: _RoomIntentState,
+        attempt: _IntentAttempt,
+        terminal_on_mismatch: bool = True,
+    ) -> IntentExecutionResult | None:
+        assert attempt.plan is not None
         try:
-            observed = await self._readback(plan)
+            observed = await self._readback(attempt.plan)
         except G301TransportError as exc:
-            return self._result(
+            result = self._result(
                 intent,
                 status="applied_unconfirmed",
-                message=f"writes completed but status verification failed: {exc}",
-                register_writes=completed_writes,
+                message=f"write outcome is uncertain and status verification failed: {exc}",
+                register_writes=attempt.completed_writes,
             )
+            if not exc.retryable:
+                return self._mark_terminal(state, attempt, result)
+            return result
 
-        mismatches = compare_readback(plan, observed)
-        return self._result(
+        mismatches = compare_readback(attempt.plan, observed)
+        if mismatches and not terminal_on_mismatch:
+            return None
+        result = self._result(
             intent,
             status="readback_mismatch" if mismatches else "applied",
             message=None if not mismatches else "G301 actual state did not match the desired state",
-            register_writes=completed_writes,
+            register_writes=attempt.completed_writes,
             mismatches={
                 f"0x{mismatch.address:04X}": {
                     "expected": mismatch.expected,
@@ -140,6 +303,22 @@ class G301EntranceWorker:
                 for mismatch in mismatches
             },
         )
+        return self._mark_terminal(state, attempt, result, applied=not mismatches)
+
+    @staticmethod
+    def _mark_terminal(
+        state: _RoomIntentState,
+        attempt: _IntentAttempt,
+        result: IntentExecutionResult,
+        *,
+        applied: bool = False,
+    ) -> IntentExecutionResult:
+        attempt.phase = IntentAttemptPhase.TERMINAL
+        attempt.cached_result = result
+        state.last_terminal_version = attempt.version
+        if applied:
+            state.last_applied_version = attempt.version
+        return result
 
     async def _write_one(self, slave_address: int, write: RegisterWrite) -> None:
         await self._with_retry(
@@ -262,3 +441,12 @@ class G301EntranceWorker:
             mismatches=mismatches or {},
             correlation_id=intent.correlation_id,
         )
+
+
+def _intent_fingerprint(intent: DesiredRoomIntent) -> str:
+    payload = json.dumps(
+        intent.stable_payload(),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()

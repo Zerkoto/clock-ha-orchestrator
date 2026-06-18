@@ -27,8 +27,12 @@ from app.g301_adapter.registers import (
     parse_capabilities,
 )
 from app.g301_adapter.simulator import G301EntranceSimulator, G301RegisterSimulator
-from app.g301_adapter.transport import G301ModbusException, G301TransportError
-from app.g301_adapter.worker import G301EntranceWorker
+from app.g301_adapter.transport import (
+    G301ModbusException,
+    G301TransportError,
+    G301TransportTimeout,
+)
+from app.g301_adapter.worker import G301EntranceWorker, IntentAttemptPhase
 
 NOW = datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
 CORRELATION_ID = UUID("00000000-0000-0000-0000-000000000301")
@@ -214,12 +218,13 @@ async def test_worker_allows_delayed_actual_state_readback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_rejects_stale_or_duplicate_intent_versions() -> None:
+async def test_worker_replays_terminal_result_and_rejects_only_older_versions() -> None:
     simulator = G301RegisterSimulator(slave_address=7)
+    client = CountingClient(simulator)
     worker = G301EntranceWorker(
         entrance_key="entrance_a",
         room_slave_addresses={"214": 7},
-        client=simulator,
+        client=client,
         retry_backoff_seconds=0,
         readback_delay_seconds=0,
     )
@@ -228,7 +233,145 @@ async def test_worker_rejects_stale_or_duplicate_intent_versions() -> None:
     )
 
     assert (await worker.apply_intent(intent)).status == "applied"
-    assert (await worker.apply_intent(intent)).status == "stale"
+    assert (await worker.apply_intent(intent)).status == "applied"
+    assert client.write_attempts == 1
+    assert (
+        await worker.apply_intent(
+            desired_intent(hvac=intent.hvac, intent_version=intent.intent_version - 1)
+        )
+    ).status == "stale"
+    assert worker.intent_version_state("214").last_applied_version == intent.intent_version
+
+
+@pytest.mark.asyncio
+async def test_profile_timeout_does_not_consume_intent_version() -> None:
+    simulator = G301RegisterSimulator(slave_address=7)
+    client = FailFirstProfileReadClient(simulator)
+    worker = G301EntranceWorker(
+        entrance_key="entrance_a",
+        room_slave_addresses={"214": 7},
+        client=client,
+        max_operation_attempts=1,
+        retry_backoff_seconds=0,
+        readback_delay_seconds=0,
+    )
+    intent = desired_intent(
+        hvac=HvacIntent(
+            enabled=True,
+            mode=ManualHvacMode.COOL,
+            target_temperature_c=24.0,
+        ),
+        intent_version=10,
+    )
+
+    first = await worker.apply_intent(intent)
+    after_timeout = worker.intent_version_state("214")
+    second = await worker.apply_intent(intent)
+    after_success = worker.intent_version_state("214")
+
+    assert first.status == "timeout"
+    assert after_timeout.last_seen_version == 10
+    assert after_timeout.last_terminal_version is None
+    assert after_timeout.last_applied_version is None
+    assert after_timeout.current_phase == IntentAttemptPhase.RETRYABLE
+    assert second.status == "applied"
+    assert after_success.last_terminal_version == 10
+    assert after_success.last_applied_version == 10
+
+
+@pytest.mark.asyncio
+async def test_redelivery_resumes_verification_without_rewriting() -> None:
+    simulator = G301RegisterSimulator(
+        slave_address=7,
+        initial={
+            int(G301Register.POWER): 1,
+            int(G301Register.POWER_STATUS): 1,
+        },
+    )
+    client = FailFirstStatusReadClient(simulator)
+    worker = G301EntranceWorker(
+        entrance_key="entrance_a",
+        room_slave_addresses={"214": 7},
+        client=client,
+        max_operation_attempts=1,
+        retry_backoff_seconds=0,
+        readback_delay_seconds=0,
+    )
+    intent = desired_intent(
+        hvac=HvacIntent(enabled=False, mode=ManualHvacMode.OFF, target_temperature_c=None),
+        intent_version=11,
+    )
+
+    first = await worker.apply_intent(intent)
+    second = await worker.apply_intent(intent)
+
+    assert first.status == "applied_unconfirmed"
+    assert second.status == "applied"
+    assert client.write_attempts == 1
+    assert worker.intent_version_state("214").last_applied_version == 11
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_is_verified_before_redelivery_rewrites() -> None:
+    simulator = G301RegisterSimulator(
+        slave_address=7,
+        initial={
+            int(G301Register.POWER): 1,
+            int(G301Register.POWER_STATUS): 1,
+        },
+    )
+    client = ApplyThenTimeoutWriteClient(simulator)
+    worker = G301EntranceWorker(
+        entrance_key="entrance_a",
+        room_slave_addresses={"214": 7},
+        client=client,
+        max_operation_attempts=1,
+        retry_backoff_seconds=0,
+        readback_delay_seconds=0,
+    )
+    intent = desired_intent(
+        hvac=HvacIntent(enabled=False, mode=ManualHvacMode.OFF, target_temperature_c=None),
+        intent_version=12,
+    )
+
+    first = await worker.apply_intent(intent)
+    second = await worker.apply_intent(intent)
+
+    assert first.status == "timeout"
+    assert second.status == "applied"
+    assert client.write_attempts == 1
+    assert worker.intent_version_state("214").last_applied_version == 12
+
+
+@pytest.mark.asyncio
+async def test_same_version_with_different_payload_is_rejected() -> None:
+    simulator = G301RegisterSimulator(slave_address=7)
+    worker = G301EntranceWorker(
+        entrance_key="entrance_a",
+        room_slave_addresses={"214": 7},
+        client=simulator,
+        retry_backoff_seconds=0,
+        readback_delay_seconds=0,
+    )
+    power_off = desired_intent(
+        hvac=HvacIntent(enabled=False, mode=ManualHvacMode.OFF, target_temperature_c=None),
+        intent_version=13,
+    )
+    conflicting = desired_intent(
+        hvac=HvacIntent(
+            enabled=True,
+            mode=ManualHvacMode.COOL,
+            target_temperature_c=24.0,
+        ),
+        intent_version=13,
+    )
+
+    assert (await worker.apply_intent(power_off)).status == "applied"
+    result = await worker.apply_intent(conflicting)
+
+    assert result.status == "rejected"
+    assert "different payload" in (result.message or "")
+    assert worker.intent_version_state("214").last_applied_version == 13
 
 
 @pytest.mark.asyncio
@@ -321,6 +464,54 @@ class FailFirstWriteClient:
         return await self.delegate.read_holding_registers(**kwargs)
 
 
+class CountingClient:
+    def __init__(self, delegate: G301RegisterSimulator) -> None:
+        self.delegate = delegate
+        self.write_attempts = 0
+
+    async def write_register(self, **kwargs) -> None:
+        self.write_attempts += 1
+        await self.delegate.write_register(**kwargs)
+
+    async def read_holding_registers(self, **kwargs) -> list[int]:
+        return await self.delegate.read_holding_registers(**kwargs)
+
+
+class FailFirstProfileReadClient:
+    def __init__(self, delegate: G301RegisterSimulator) -> None:
+        self.delegate = delegate
+        self.failed = False
+
+    async def write_register(self, **kwargs) -> None:
+        await self.delegate.write_register(**kwargs)
+
+    async def read_holding_registers(self, **kwargs) -> list[int]:
+        if kwargs["address"] == G301Register.CAPABILITIES and not self.failed:
+            self.failed = True
+            raise G301TransportTimeout("profile read timed out")
+        return await self.delegate.read_holding_registers(**kwargs)
+
+
+class FailFirstStatusReadClient(CountingClient):
+    def __init__(self, delegate: G301RegisterSimulator) -> None:
+        super().__init__(delegate)
+        self.failed = False
+
+    async def read_holding_registers(self, **kwargs) -> list[int]:
+        if kwargs["address"] == G301Register.POWER_STATUS and not self.failed:
+            self.failed = True
+            raise G301TransportTimeout("status read timed out")
+        return await self.delegate.read_holding_registers(**kwargs)
+
+
+class ApplyThenTimeoutWriteClient(CountingClient):
+    async def write_register(self, **kwargs) -> None:
+        self.write_attempts += 1
+        await self.delegate.write_register(**kwargs)
+        if self.write_attempts == 1:
+            raise G301TransportTimeout("write acknowledgement timed out")
+
+
 class FailingClient:
     def __init__(self, error: Exception) -> None:
         self.error = error
@@ -364,10 +555,15 @@ class ConcurrencyTrackingClient:
         return await self.delegate.read_holding_registers(**kwargs)
 
 
-def desired_intent(*, hvac: HvacIntent, room_key: str = "214") -> DesiredRoomIntent:
+def desired_intent(
+    *,
+    hvac: HvacIntent,
+    room_key: str = "214",
+    intent_version: int = 3,
+) -> DesiredRoomIntent:
     return DesiredRoomIntent(
         room_key=room_key,
-        intent_version=3,
+        intent_version=intent_version,
         automation_phase=AutomationPhase.OCCUPIED,
         control_mode=ControlMode.AUTOMATIC,
         effective_from=NOW,

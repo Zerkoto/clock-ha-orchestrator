@@ -148,9 +148,9 @@ slice:
     execution results and entrance adapter health.
 22. Offline G301 Version G register codecs, typed slave-aware async transport
     boundary, capability and limit validation, actual-status readback, delayed
-    verification, bounded retry, stale-intent rejection, multi-slave simulator
-    and serialized entrance worker under `app/g301_adapter`. This is not live
-    Modbus transport.
+    verification, bounded retry, separate seen/terminal/applied intent version
+    tracking, retry-aware MQTT redelivery, multi-slave simulator and serialized
+    entrance worker under `app/g301_adapter`. This is not live Modbus transport.
 23. Dockerfile, Docker Compose with app/OT network separation, and hardened
     Mosquitto examples.
 24. Documentation under `docs/`, including `docs/g301-register-map.md`.
@@ -227,7 +227,7 @@ Result after the entrance/G301 foundation on
 `codex/entrance-g301-foundation`:
 
 ```text
-pytest: 60 passed
+pytest: 64 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
 mypy: Success, no issues found in 43 source files
