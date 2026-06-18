@@ -35,7 +35,7 @@ Clock synchronization must not publish MQTT from inside the booking transaction.
 
 ## Hardware Neutrality
 
-Desired room intent is not device execution. Future adapters subscribe to `hotel/v1/rooms/{room_key}/intent/state`, translate intent into their own hardware protocol, and publish reported state separately.
+Desired room intent is not device execution. Adapters subscribe to `hotel/v1/rooms/{room_key}/intent/state`, translate intent into their own hardware protocol, publish reported state separately and publish intent execution results without mutating desired state.
 
 ## Entrance-Based Registry
 

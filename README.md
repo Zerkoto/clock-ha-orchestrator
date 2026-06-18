@@ -83,6 +83,6 @@ Home Assistant UI and install the generated dashboard YAML under
 
 ## Development Order
 
-The current implementation covers the first reviewable slice: scaffold, settings validation, typed domain model, deterministic state machine, policy/intent generation, Clock adapter boundary, MQTT topic/discovery helpers, Home Assistant command handling, dashboard generation, persistence models, tests, Docker Compose, and operations docs.
+The current implementation covers the first reviewable slice: scaffold, settings validation, typed entrance-aware domain model, deterministic state machine, policy/intent generation, Clock adapter boundary, MQTT topic/discovery helpers, Home Assistant command handling, entrance-grouped dashboard generation, persistence models and migrations, transactional outbox, offline G301 Version G adapter foundation, tests, Docker Compose, and operations docs.
 
 Before implementing live Clock endpoint behavior, update `docs/clock-api-mapping.md` with either official Clock documentation references or sanitized sandbox payloads. Do not mark the service production-ready while endpoint, pagination and physical-room mappings remain unverified.

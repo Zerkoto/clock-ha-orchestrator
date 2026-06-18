@@ -7,6 +7,7 @@ Future adapters are interchangeable consumers of desired room intent. They must 
 - Corridor gateway adapter.
 - RFTC-6 adapter.
 - Wired central-controller adapter.
+- G301 Modbus adapter.
 - Alpin/Modbus adapter.
 
 ## Required Behavior

@@ -58,7 +58,7 @@ Booking.com
 -> Custom Clock-HA Orchestrator
 -> MQTT broker
 -> Home Assistant
--> future hardware adapters
+-> G301 / future hardware adapters
 ```
 
 Booking.com already communicates with Clock PMS+ through Clock's native
@@ -93,7 +93,10 @@ Do not:
 5. Treat a room type as a physical room.
 6. Issue automation intent before Clock has assigned a specific physical room.
 7. Put iNELS, RFTC-6, MUK, relay, TCP-controller, Modbus, G301, Alpin, or other
-   hardware-specific code inside Clock ingestion or the policy engine.
+   hardware-specific execution inside Clock ingestion or the policy engine.
+   Offline adapter codecs, schemas, planners and simulators must stay isolated
+   behind MQTT contracts and must not perform live hardware writes until
+   commissioning confirms the gateway topology and room addressing.
 8. Publish fake device success, fake actual temperature, or fabricated hardware
    state.
 9. Publish MQTT directly inside the Clock synchronization transaction.
@@ -136,10 +139,21 @@ slice:
     consumer, retained `control/state` publication, natural manual override
     expiry/return-to-automatic handling, booking-bound `until_checkout`
     overrides and valid Sections dashboard generation.
-19. Dockerfile, Docker Compose and hardened Mosquitto examples.
-20. Documentation under `docs/`.
-21. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
-22. Unit tests.
+19. Entrance-aware room registry model: `entrance_key` is required for rooms,
+    `floor` is optional display metadata, and optional G301 slave mappings are
+    validated per entrance.
+20. Entrance-grouped generated Reception dashboard with adapter/gateway health
+    and desired-versus-reported room state entities.
+21. Adapter-facing MQTT schemas and topics for reported room state, intent
+    execution results and entrance adapter health.
+22. Offline G301 Version G register codecs, capability parsing, fault decoding,
+    safe intent planner, readback comparison, simulator and worker shell under
+    `app/g301_adapter`. This is not live Modbus transport.
+23. Dockerfile, Docker Compose with app/OT network separation, and hardened
+    Mosquitto examples.
+24. Documentation under `docs/`, including `docs/g301-register-map.md`.
+25. GitHub Actions CI with Ruff format, Alembic and Docker build steps.
+26. Unit tests.
 
 ## Important Files
 
@@ -178,9 +192,12 @@ app/policy/control.py
 app/mqtt/topics.py
 app/mqtt/client.py
 app/mqtt/discovery.py
+app/mqtt/schemas.py
+app/g301_adapter/
 app/outbox/service.py
 app/persistence/models.py
 app/system/state.py
+docs/g301-register-map.md
 migrations/versions/
 tools/generate_dashboard.py
 tests/
@@ -201,17 +218,18 @@ Commands:
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
+.\.venv\Scripts\python.exe -m alembic heads
 ```
 
-Result after the `until_checkout` booking-boundary fix on
-`codex/add-db-sync-outbox`:
+Result after the entrance/G301 foundation on
+`codex/entrance-g301-foundation`:
 
 ```text
-pytest: 48 passed
+pytest: 54 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
-mypy: Success, no issues found in 36 source files
-alembic heads: 20260618_0004 (head)
+mypy: Success, no issues found in 42 source files
+alembic heads: 20260618_0005 (head)
 ```
 
 Docker was not run locally because Docker is not available in the shell PATH.
@@ -321,6 +339,9 @@ hotel/v1/rooms/{room_key}/control/duration/set
 hotel/v1/rooms/{room_key}/control/water-heater/set
 hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 hotel/v1/rooms/{room_key}/reported/state
+hotel/v1/rooms/{room_key}/intent/result
+hotel/v1/entrances/{entrance_key}/adapter/availability
+hotel/v1/entrances/{entrance_key}/adapter/state
 ```
 
 Rules:
@@ -335,8 +356,8 @@ Rules:
 8. Add correlation IDs.
 9. Subscribe to Home Assistant birth/status and republish discovery after Home
    Assistant starts.
-10. `reported/state` is reserved for future hardware adapters; the orchestrator
-   should not fabricate it.
+10. `reported/state`, `intent/result` and entrance adapter health are published
+    by adapters, not fabricated by the orchestrator.
 
 ## Database Model
 
@@ -368,6 +389,8 @@ Important invariants:
 8. `until_checkout` manual overrides are bound to the booking row and exact
    checkout boundary captured when the command is accepted; they must not carry
    over to the next occupant of the same room.
+9. Rooms require `entrance_key`; `floor` is optional display metadata only.
+10. Optional G301 slave addresses are unique within each entrance.
 
 ## Current Gaps And Next Useful Slice
 
@@ -376,7 +399,9 @@ verification and hardening the remaining runtime operations:
 
 1. Add real PostgreSQL integration tests around migration application,
    transaction rollback, concurrent sync attempts and concurrent outbox claims.
-2. Add sanitized Clock sandbox fixtures and contract tests once physical-room
+2. Verify the entrance registry migration against PostgreSQL and sample
+   production-scale room registries.
+3. Add sanitized Clock sandbox fixtures and contract tests once physical-room
    fields, filters and pagination are confirmed.
 
 Other important next work:
@@ -387,7 +412,11 @@ Other important next work:
    command.
 3. Run Docker Compose once Docker is available and real Mosquitto password/ACL
    files have been generated.
-4. Expand end-to-end tests for unassigned booking -> assigned room ->
+4. Complete the official five entrance names, exact room membership, gateway
+   host/port values and G301 slave address map after project commissioning
+   begins.
+5. Bench-test one real G301/AC before adding live Modbus transport.
+6. Expand end-to-end tests for unassigned booking -> assigned room ->
    pre-arrival -> check-in -> manual override -> room move -> checkout.
 
 ## Commands For Future Agents
@@ -400,6 +429,7 @@ cd C:\Users\zerko\Documents\GIT\clock-ha-orchestrator
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
+.\.venv\Scripts\python.exe -m alembic heads
 ```
 
 Regenerate dashboard:
@@ -450,7 +480,7 @@ through MQTT for approximately 275 apartments.
 
 Confirmed architecture:
 Booking.com -> Clock PMS+ -> Custom Clock-HA Orchestrator -> MQTT broker ->
-Home Assistant -> future hardware adapters.
+Home Assistant -> G301 / future hardware adapters.
 
 Critical constraints:
 - Do not create a Booking.com API client.
@@ -458,9 +488,11 @@ Critical constraints:
   fields or status values.
 - Before implementing Clock-specific fields/endpoints, cite official Clock
   docs or record sanitized sandbox payloads in docs/clock-api-mapping.md.
-- Do not implement physical hardware adapters in Version 1.
+- Do not enable live physical hardware execution in Version 1. Offline adapter
+  codecs, schemas, planners and simulators are allowed only when isolated from
+  Clock ingestion and policy code.
 - Keep iNELS, RFTC-6, MUK, relay, TCP-controller, Modbus, G301, Alpin and
-  other hardware-specific code out of Clock ingestion and policy code.
+  other hardware-specific execution out of Clock ingestion and policy code.
 - Do not store or publish guest PII or payment data.
 - Room type is not a physical room.
 - Never issue automation intent until Clock has assigned a physical room.
@@ -471,10 +503,12 @@ Critical constraints:
 Before editing, run:
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy app
+.\.venv\Scripts\python.exe -m alembic heads
 
 Continue from the existing codebase rather than recreating it. The most useful
-next production slice is DB-backed synchronization/upsert plus assignment-change
-detection and transactional outbox event creation, unless inspection reveals a
-more urgent issue.
+next production slice is PostgreSQL/Docker verification, production-scale
+entrance registry validation and remaining runtime hardening, unless inspection
+reveals a more urgent issue.
 ```
