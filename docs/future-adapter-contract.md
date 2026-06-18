@@ -22,8 +22,12 @@ Each adapter publishes actual state and execution results separately to:
 
 ```text
 hotel/v1/rooms/{room_key}/reported/state
-hotel/v1/rooms/{room_key}/intent/result
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
 ```
+
+Execution results identify `adapter_key` and `handled_components`. Retaining
+results per adapter prevents independent HVAC, water-heater and convector
+workers from overwriting one another's latest result.
 
 Adapters must preserve:
 
@@ -46,6 +50,11 @@ Shared-bus transports must include the slave/unit address on every read and
 write. Traffic is parallel across independent entrances and serialized within
 each entrance.
 
+An entrance worker must derive its room and slave membership from the room
+registry. It must reject unknown or disabled entrances and must not accept a
+free-form room map that can route a command across entrance boundaries. Floor
+is display metadata only and is never a routing key.
+
 ## Intent Version Lifecycle
 
 Adapters track three independent per-room watermarks:
@@ -67,6 +76,17 @@ The adapter fingerprints the semantic payload for the current version. Reusing
 one version number for a different payload is rejected as a contract violation.
 The offline worker keeps this state in memory; the production adapter should
 persist it so restart and reconnect behavior retains the same idempotency rules.
+
+Adapters reject unsupported schemas and malformed HVAC states. An expired
+intent is terminal without hardware access; an intent whose `effective_from`
+is still in the future is retryable and must not consume the version. Small
+clock-skew tolerance may be configured, but timestamps must be timezone-aware.
+
+A failed slave must enter an independent bounded exponential cooldown. Commands
+for that slave fail fast during the cooldown while other slaves on the same
+entrance remain eligible. Gateway-wide failures may still affect the whole
+entrance. The live scheduler should avoid sleeping while it owns the entrance
+bus lock and should interleave delayed verification with other ready work.
 
 ## G301 Version G Baseline
 

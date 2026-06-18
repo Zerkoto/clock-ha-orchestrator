@@ -19,7 +19,7 @@ hotel/v1/rooms/{room_key}/control/duration/set
 hotel/v1/rooms/{room_key}/control/water-heater/set
 hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 hotel/v1/rooms/{room_key}/reported/state
-hotel/v1/rooms/{room_key}/intent/result
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
 hotel/v1/entrances/{entrance_key}/adapter/availability
 hotel/v1/entrances/{entrance_key}/adapter/state
 ```
@@ -148,11 +148,11 @@ Adapters publish retained actual room state without guest PII:
 ```
 
 Final execution statuses are `applied`, `applied_unconfirmed`, `rejected`,
-`timeout`, `modbus_exception`, `readback_mismatch`, `device_offline`, `stale`,
-`failed` or `skipped`. `accepted`, `queued` and `writing` are available for
-intermediate event streams. `applied_unconfirmed` means writes completed but
-actual-state verification could not complete; it must not be presented as
-confirmed success.
+`expired`, `timeout`, `modbus_exception`, `readback_mismatch`, `device_offline`,
+`stale`, `failed` or `skipped`. `not_yet_effective` is retryable. `accepted`,
+`queued` and `writing` are available for intermediate event streams.
+`applied_unconfirmed` means writes completed but actual-state verification
+could not complete; it must not be presented as confirmed success.
 
 `stale` means the received version is lower than the adapter's highest seen
 version. Equal-version MQTT redelivery is not stale: retryable work resumes,
@@ -166,6 +166,8 @@ Adapters publish execution results for each consumed intent:
   "schema_version": 1,
   "room_key": "214",
   "intent_version": 17,
+  "adapter_key": "g301",
+  "handled_components": ["hvac"],
   "status": "applied",
   "message": null,
   "applied_at": "2026-12-20T10:05:01+00:00",
@@ -178,6 +180,10 @@ Adapters publish execution results for each consumed intent:
   "correlation_id": "00000000-0000-0000-0000-000000000000"
 }
 ```
+
+Results are retained on the adapter-scoped result topic. Consumers must use
+`handled_components` to interpret the result and must not infer that unrelated
+components were applied.
 
 Entrance adapter health is published under:
 

@@ -76,6 +76,12 @@ active manual overrides, rooms needing attention, runtime readiness, MQTT
 connection, outbox health, adapter/gateway health and desired-versus-reported
 room state.
 
+Adapter intent handling validates schema and validity windows, keeps separate
+seen/terminal/applied version watermarks for safe MQTT redelivery, routes by
+registry entrance rather than floor, publishes component-scoped execution
+results, and applies per-slave cooldown so a failed indoor unit does not keep
+blocking healthy units on the same entrance.
+
 Generate the Home Assistant dashboard with:
 
 ```powershell

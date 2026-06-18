@@ -50,6 +50,8 @@ class IntentExecutionResult(BaseModel):
     schema_version: int = 1
     room_key: str
     intent_version: int
+    adapter_key: str
+    handled_components: list[Literal["hvac", "water_heater", "convectors"]]
     status: Literal[
         "accepted",
         "queued",
@@ -61,6 +63,8 @@ class IntentExecutionResult(BaseModel):
         "modbus_exception",
         "readback_mismatch",
         "device_offline",
+        "not_yet_effective",
+        "expired",
         "stale",
         "failed",
         "skipped",

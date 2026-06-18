@@ -19,7 +19,9 @@ def test_topics_match_contract() -> None:
         == "hotel/v1/rooms/214/control/return-to-automatic/set"
     )
     assert topics.room_reported_state("214") == "hotel/v1/rooms/214/reported/state"
-    assert topics.room_intent_result("214") == "hotel/v1/rooms/214/intent/result"
+    assert (
+        topics.room_intent_result("214", "g301") == "hotel/v1/rooms/214/adapters/g301/intent/result"
+    )
     assert (
         topics.entrance_adapter_state("entrance_a") == "hotel/v1/entrances/entrance_a/adapter/state"
     )

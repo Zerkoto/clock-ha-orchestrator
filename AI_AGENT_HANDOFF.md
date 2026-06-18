@@ -149,8 +149,10 @@ slice:
 22. Offline G301 Version G register codecs, typed slave-aware async transport
     boundary, capability and limit validation, actual-status readback, delayed
     verification, bounded retry, separate seen/terminal/applied intent version
-    tracking, retry-aware MQTT redelivery, multi-slave simulator and serialized
-    entrance worker under `app/g301_adapter`. This is not live Modbus transport.
+    tracking, retry-aware MQTT redelivery, schema/time-window validation,
+    registry-derived entrance routing, per-slave failure cooldown, multi-slave
+    simulator and serialized entrance worker under `app/g301_adapter`. This is
+    not live Modbus transport.
 23. Dockerfile, Docker Compose with app/OT network separation, and hardened
     Mosquitto examples.
 24. Documentation under `docs/`, including `docs/g301-register-map.md`.
@@ -227,7 +229,7 @@ Result after the entrance/G301 foundation on
 `codex/entrance-g301-foundation`:
 
 ```text
-pytest: 64 passed
+pytest: 69 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
 mypy: Success, no issues found in 43 source files
@@ -341,7 +343,7 @@ hotel/v1/rooms/{room_key}/control/duration/set
 hotel/v1/rooms/{room_key}/control/water-heater/set
 hotel/v1/rooms/{room_key}/control/return-to-automatic/set
 hotel/v1/rooms/{room_key}/reported/state
-hotel/v1/rooms/{room_key}/intent/result
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
 hotel/v1/entrances/{entrance_key}/adapter/availability
 hotel/v1/entrances/{entrance_key}/adapter/state
 ```

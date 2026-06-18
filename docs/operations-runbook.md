@@ -51,7 +51,7 @@ to future hardware adapter topics.
 
 Adapter-reported room state appears under
 `hotel/v1/rooms/{room_key}/reported/state`, execution results under
-`hotel/v1/rooms/{room_key}/intent/result`, and entrance adapter health under
+`hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result`, and entrance adapter health under
 `hotel/v1/entrances/{entrance_key}/adapter/state`. The orchestrator publishes
 Discovery metadata for these entities, but the adapter is responsible for the
 actual state payloads.
@@ -96,6 +96,13 @@ until the project confirms:
 The live adapter must be deployed as a separate executable/container on the OT
 network. Do not add it to the FastAPI lifespan. Run one serialized worker per
 entrance and allow those independent entrance workers to execute concurrently.
+Workers derive entrance membership from the registry and ignore disabled rooms.
+The offline baseline uses one two-second operation attempt and a per-slave
+exponential cooldown (five seconds initially, capped at five minutes), so one
+offline indoor unit fails fast without repeatedly occupying the entrance bus.
+Treat gateway loss separately because it is entrance-wide. A production queue
+should release the bus lock during retry/readback delays and service other ready
+slaves before revisiting a cooling-down device.
 
 ## Backups
 

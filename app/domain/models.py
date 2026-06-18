@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -70,6 +70,12 @@ class Entrance(BaseModel):
     gateway_host: str | None = None
     gateway_port: int | None = Field(default=None, ge=1, le=65535)
     enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_gateway_address(self) -> Entrance:
+        if (self.gateway_host is None) != (self.gateway_port is None):
+            raise ValueError("gateway_host and gateway_port must be configured together")
+        return self
 
 
 class G301RoomMapping(BaseModel):
@@ -223,15 +229,29 @@ class HvacIntent(BaseModel):
     mode: ManualHvacMode
     target_temperature_c: float | None = None
 
+    @model_validator(mode="after")
+    def validate_hvac_state(self) -> HvacIntent:
+        if self.enabled:
+            if self.mode == ManualHvacMode.OFF:
+                raise ValueError("enabled HVAC intent cannot use off mode")
+            if self.target_temperature_c is None:
+                raise ValueError("enabled HVAC intent requires target_temperature_c")
+        else:
+            if self.mode != ManualHvacMode.OFF:
+                raise ValueError("disabled HVAC intent must use off mode")
+            if self.target_temperature_c is not None:
+                raise ValueError("disabled HVAC intent cannot set target_temperature_c")
+        return self
+
 
 class BinaryIntent(BaseModel):
     enabled: bool
 
 
 class DesiredRoomIntent(BaseModel):
-    schema_version: int = 1
-    room_key: str
-    intent_version: int
+    schema_version: Literal[1] = 1
+    room_key: str = Field(min_length=1)
+    intent_version: int = Field(ge=1)
     automation_phase: AutomationPhase
     control_mode: ControlMode
     effective_from: datetime
@@ -239,8 +259,19 @@ class DesiredRoomIntent(BaseModel):
     hvac: HvacIntent
     water_heater: BinaryIntent
     convectors: BinaryIntent
-    reason: str
+    reason: str = Field(min_length=1)
     correlation_id: UUID = Field(default_factory=uuid4)
+
+    @model_validator(mode="after")
+    def validate_validity_window(self) -> DesiredRoomIntent:
+        if self.effective_from.utcoffset() is None:
+            raise ValueError("effective_from must be timezone-aware")
+        if self.expires_at is not None:
+            if self.expires_at.utcoffset() is None:
+                raise ValueError("expires_at must be timezone-aware")
+            if self.expires_at <= self.effective_from:
+                raise ValueError("expires_at must be after effective_from")
+        return self
 
     def stable_payload(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json")

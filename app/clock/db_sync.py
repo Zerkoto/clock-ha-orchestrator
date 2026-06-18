@@ -602,6 +602,7 @@ class ClockDbSyncService:
             )
             pms_payload = _pms_state_payload(state, correlation_id=correlation_id)
             semantic_hash = _room_state_hash(state, intent)
+            self._lock_room(room_id)
             latest_state = self._latest_room_state(room_id)
             control_payload, override_audit_events = self._end_inactive_override_if_needed(
                 registry,
@@ -631,6 +632,13 @@ class ClockDbSyncService:
                 intent = intent.model_copy(
                     update={"intent_version": _next_intent_version(latest_state)}
                 )
+            persisted_intent_version = (
+                intent.intent_version
+                if intent is not None
+                else latest_state.intent_version
+                if latest_state is not None
+                else 0
+            )
 
             booking_id = (
                 loaded.ids_by_clock_booking_id.get(state.booking.clock_booking_id)
@@ -646,7 +654,7 @@ class ClockDbSyncService:
                     attention_reason=state.attention_reason.value,
                     effective_from=_to_utc(state.effective_from),
                     expires_at=_optional_to_utc(state.expires_at),
-                    intent_version=intent.intent_version if intent is not None else 0,
+                    intent_version=persisted_intent_version,
                     payload_hash=semantic_hash,
                     created_at=observed_at,
                 )
@@ -785,6 +793,11 @@ class ClockDbSyncService:
             .order_by(db.RoomState.created_at.desc(), db.RoomState.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+
+    def _lock_room(self, room_id: UUID) -> None:
+        self._session.execute(
+            select(db.Room.id).where(db.Room.id == room_id).with_for_update()
+        ).scalar_one()
 
     def _active_override_from_row(
         self,

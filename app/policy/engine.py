@@ -145,7 +145,7 @@ def _build_intent(
 ) -> DesiredRoomIntent:
     return DesiredRoomIntent(
         room_key=state.room_key or "",
-        intent_version=0,
+        intent_version=1,
         automation_phase=state.phase,
         control_mode=control_mode,
         effective_from=state.effective_from or now,

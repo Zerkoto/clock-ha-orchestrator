@@ -18,7 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column("rooms", sa.Column("entrance_key", sa.String(length=120), nullable=True))
-    op.execute("UPDATE rooms SET entrance_key = COALESCE(NULLIF(floor, ''), 'legacy')")
+    op.execute("UPDATE rooms SET entrance_key = 'legacy_unassigned'")
     op.alter_column("rooms", "entrance_key", existing_type=sa.String(length=120), nullable=False)
     op.alter_column("rooms", "floor", existing_type=sa.String(length=80), nullable=True)
     op.create_index(

@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TypeVar
 
 from app.domain.enums import ManualHvacMode
-from app.domain.models import DesiredRoomIntent
+from app.domain.models import DesiredRoomIntent, RoomRegistry
 from app.g301_adapter.planner import (
     G301Plan,
     G301PlanningError,
@@ -47,6 +47,12 @@ class IntentVersionState:
     current_phase: IntentAttemptPhase | None = None
 
 
+@dataclass(frozen=True)
+class SlaveFailureState:
+    consecutive_failures: int = 0
+    retry_after: datetime | None = None
+
+
 @dataclass
 class _IntentAttempt:
     version: int
@@ -69,14 +75,18 @@ class G301EntranceWorker:
     def __init__(
         self,
         *,
+        registry: RoomRegistry,
         entrance_key: str,
-        room_slave_addresses: Mapping[str, int],
         client: G301RegisterClient,
-        operation_timeout_seconds: float = 5.0,
-        max_operation_attempts: int = 3,
+        operation_timeout_seconds: float = 2.0,
+        max_operation_attempts: int = 1,
         retry_backoff_seconds: float = 0.1,
-        readback_attempts: int = 3,
+        readback_attempts: int = 2,
         readback_delay_seconds: float = 1.0,
+        slave_retry_base_seconds: float = 5.0,
+        slave_retry_max_seconds: float = 300.0,
+        validity_clock_skew_seconds: float = 5.0,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if operation_timeout_seconds <= 0:
             raise ValueError("operation_timeout_seconds must be positive")
@@ -86,16 +96,36 @@ class G301EntranceWorker:
             raise ValueError("readback_attempts must be at least 1")
         if retry_backoff_seconds < 0 or readback_delay_seconds < 0:
             raise ValueError("retry and readback delays cannot be negative")
+        if slave_retry_base_seconds <= 0 or slave_retry_max_seconds < slave_retry_base_seconds:
+            raise ValueError("slave retry delays are invalid")
+        if validity_clock_skew_seconds < 0:
+            raise ValueError("validity_clock_skew_seconds cannot be negative")
+        entrances = {entrance.key: entrance for entrance in registry.entrances}
+        entrance = entrances.get(entrance_key)
+        if entrance is None:
+            raise ValueError(f"unknown entrance_key: {entrance_key}")
+        if not entrance.enabled:
+            raise ValueError(f"entrance is disabled: {entrance_key}")
+        room_slave_addresses = {
+            room.key: room.g301.slave_address
+            for room in registry.rooms
+            if room.enabled and room.entrance_key == entrance_key and room.g301 is not None
+        }
         self.entrance_key = entrance_key
-        self.room_slave_addresses = dict(room_slave_addresses)
+        self.room_slave_addresses = room_slave_addresses
         self.client = client
         self.operation_timeout_seconds = operation_timeout_seconds
         self.max_operation_attempts = max_operation_attempts
         self.retry_backoff_seconds = retry_backoff_seconds
         self.readback_attempts = readback_attempts
         self.readback_delay_seconds = readback_delay_seconds
+        self.slave_retry_base_seconds = slave_retry_base_seconds
+        self.slave_retry_max_seconds = slave_retry_max_seconds
+        self.validity_clock_skew_seconds = validity_clock_skew_seconds
+        self._clock = clock or _utc_now
         self._bus_lock = asyncio.Lock()
         self._intent_states: dict[str, _RoomIntentState] = {}
+        self._slave_failures: dict[int, SlaveFailureState] = {}
 
     def intent_version_state(self, room_key: str) -> IntentVersionState:
         state = self._intent_states.get(room_key)
@@ -109,6 +139,9 @@ class G301EntranceWorker:
                 state.current_attempt.phase if state.current_attempt is not None else None
             ),
         )
+
+    def slave_failure_state(self, slave_address: int) -> SlaveFailureState:
+        return self._slave_failures.get(slave_address, SlaveFailureState())
 
     async def apply_intent(self, intent: DesiredRoomIntent) -> IntentExecutionResult:
         async with self._bus_lock:
@@ -186,6 +219,30 @@ class G301EntranceWorker:
         attempt.phase = IntentAttemptPhase.RETRYABLE
         attempt.plan = None
         attempt.completed_writes.clear()
+        now = self._clock()
+        skew = timedelta(seconds=self.validity_clock_skew_seconds)
+        if intent.expires_at is not None and intent.expires_at <= now - skew:
+            result = self._result(
+                intent,
+                status="expired",
+                message="intent validity window has expired",
+            )
+            return self._mark_terminal(state, attempt, result)
+        if intent.effective_from > now + skew:
+            return self._result(
+                intent,
+                status="not_yet_effective",
+                message="intent effective_from is in the future",
+            )
+        failure_state = self.slave_failure_state(slave_address)
+        if failure_state.retry_after is not None and failure_state.retry_after > now:
+            return self._result(
+                intent,
+                status="device_offline",
+                message=(
+                    f"G301 slave is in retry cooldown until {failure_state.retry_after.isoformat()}"
+                ),
+            )
         try:
             profile = None
             if intent.hvac.enabled and intent.hvac.mode != ManualHvacMode.OFF:
@@ -205,6 +262,7 @@ class G301EntranceWorker:
             result = self._transport_failure_result(intent, exc)
             if not exc.retryable:
                 return self._mark_terminal(state, attempt, result)
+            self._record_slave_failure(slave_address)
             return result
 
         attempt.plan = plan
@@ -224,11 +282,16 @@ class G301EntranceWorker:
             if not exc.retryable:
                 return self._mark_terminal(state, attempt, result)
             attempt.phase = IntentAttemptPhase.VERIFICATION_PENDING
+            self._record_slave_failure(slave_address)
             return result
 
         attempt.phase = IntentAttemptPhase.VERIFICATION_PENDING
         verification_result = await self._verify_attempt(intent, state=state, attempt=attempt)
         assert verification_result is not None
+        if verification_result.status in {"applied", "readback_mismatch"}:
+            self._record_slave_success(slave_address)
+        elif verification_result.status == "applied_unconfirmed":
+            self._record_slave_failure(slave_address)
         return verification_result
 
     async def _resume_verification(
@@ -239,6 +302,16 @@ class G301EntranceWorker:
         state: _RoomIntentState,
         attempt: _IntentAttempt,
     ) -> IntentExecutionResult:
+        failure_state = self.slave_failure_state(slave_address)
+        now = self._clock()
+        if failure_state.retry_after is not None and failure_state.retry_after > now:
+            return self._result(
+                intent,
+                status="device_offline",
+                message=(
+                    f"G301 slave is in retry cooldown until {failure_state.retry_after.isoformat()}"
+                ),
+            )
         if attempt.plan is None:
             attempt.phase = IntentAttemptPhase.RETRYABLE
             return await self._execute_intent(
@@ -254,6 +327,10 @@ class G301EntranceWorker:
             terminal_on_mismatch=False,
         )
         if result is not None:
+            if result.status == "applied":
+                self._record_slave_success(slave_address)
+            elif result.status == "applied_unconfirmed":
+                self._record_slave_failure(slave_address)
             return result
 
         attempt.phase = IntentAttemptPhase.RETRYABLE
@@ -422,6 +499,21 @@ class G301EntranceWorker:
             register_writes=register_writes,
         )
 
+    def _record_slave_failure(self, slave_address: int) -> None:
+        previous = self.slave_failure_state(slave_address)
+        failures = previous.consecutive_failures + 1
+        delay = min(
+            self.slave_retry_base_seconds * (2 ** min(failures - 1, 16)),
+            self.slave_retry_max_seconds,
+        )
+        self._slave_failures[slave_address] = SlaveFailureState(
+            consecutive_failures=failures,
+            retry_after=self._clock() + timedelta(seconds=delay),
+        )
+
+    def _record_slave_success(self, slave_address: int) -> None:
+        self._slave_failures.pop(slave_address, None)
+
     @staticmethod
     def _result(
         intent: DesiredRoomIntent,
@@ -434,6 +526,8 @@ class G301EntranceWorker:
         return IntentExecutionResult(
             room_key=intent.room_key,
             intent_version=intent.intent_version,
+            adapter_key="g301",
+            handled_components=["hvac"],
             status=status,
             message=message,
             applied_at=datetime.now(UTC),
@@ -450,3 +544,7 @@ def _intent_fingerprint(intent: DesiredRoomIntent) -> str:
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)

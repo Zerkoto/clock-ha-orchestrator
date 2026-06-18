@@ -45,6 +45,10 @@ is optional display metadata only. The final five production entrance names,
 gateway addresses and room-to-G301 slave mapping must be supplied by the project
 commissioning process before live hardware execution is enabled.
 
+Legacy rows migrate to the explicit `legacy_unassigned` entrance rather than
+deriving routing from floor. Adapter workers refuse unknown or disabled
+entrances and derive enabled room/slave membership from the registry.
+
 The recommended deployment keeps the G301 adapter separate from Clock
 synchronization. The adapter consumes MQTT desired intent, performs protocol
 translation, publishes room reported state, publishes intent execution results

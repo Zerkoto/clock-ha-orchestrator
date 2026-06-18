@@ -26,7 +26,7 @@ def room_discovery_configs(room: Room, topics: MqttTopics) -> Iterable[tuple[str
     intent_topic = topics.room_intent_state(room.key)
     control_state_topic = topics.room_control_state(room.key)
     reported_topic = topics.room_reported_state(room.key)
-    result_topic = topics.room_intent_result(room.key)
+    result_topic = topics.room_intent_result(room.key, "g301")
     base = f"room_{room.key}"
     availability = {
         "availability_topic": topics.availability,
