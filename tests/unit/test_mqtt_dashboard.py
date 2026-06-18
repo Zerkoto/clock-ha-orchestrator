@@ -1,10 +1,16 @@
+from datetime import UTC, datetime
+
+import pytest
+
 from app.dashboard.generator import generate_dashboard
+from app.domain.enums import ManualHvacMode
 from app.domain.models import Entrance, PropertyRegistry, Room, RoomRegistry
 from app.mqtt.discovery import (
     entrance_discovery_configs,
     room_discovery_configs,
     system_discovery_configs,
 )
+from app.mqtt.schemas import ReportedHvacState, ReportedRoomState
 from app.mqtt.topics import MqttTopics
 
 
@@ -18,13 +24,49 @@ def test_topics_match_contract() -> None:
         topics.room_control_return_to_automatic_set("214")
         == "hotel/v1/rooms/214/control/return-to-automatic/set"
     )
-    assert topics.room_reported_state("214") == "hotel/v1/rooms/214/reported/state"
+    assert (
+        topics.room_reported_state("214", "g301")
+        == "hotel/v1/rooms/214/adapters/g301/reported/state"
+    )
     assert (
         topics.room_intent_result("214", "g301") == "hotel/v1/rooms/214/adapters/g301/intent/result"
     )
     assert (
         topics.entrance_adapter_state("entrance_a") == "hotel/v1/entrances/entrance_a/adapter/state"
     )
+
+
+def test_reported_state_components_match_adapter_ownership() -> None:
+    reported = ReportedRoomState(
+        room_key="214",
+        adapter_key="g301",
+        handled_components=["hvac"],
+        intent_version=17,
+        online=True,
+        reported_at=datetime(2026, 6, 18, 12, 0, tzinfo=UTC),
+        hvac=ReportedHvacState(
+            enabled=True,
+            mode=ManualHvacMode.HEAT,
+            target_temperature_c=22.0,
+        ),
+    )
+
+    assert reported.handled_components == ["hvac"]
+    offline = ReportedRoomState(
+        room_key="214",
+        adapter_key="g301",
+        handled_components=["hvac"],
+        online=False,
+        reported_at=datetime(2026, 6, 18, 12, 1, tzinfo=UTC),
+    )
+    assert offline.hvac is None
+    with pytest.raises(ValueError, match="must be owned"):
+        ReportedRoomState.model_validate(
+            {
+                **reported.model_dump(),
+                "handled_components": ["water_heater"],
+            }
+        )
 
 
 def test_discovery_uses_stable_unique_ids() -> None:
@@ -52,9 +94,9 @@ def test_discovery_uses_stable_unique_ids() -> None:
         "{{ 'on' if value_json.manual_water_heater_enabled else 'off' }}"
     )
     reported_temperature = configs["homeassistant/sensor/room_214_reported_temperature/config"]
-    assert reported_temperature["state_topic"] == "hotel/v1/rooms/214/reported/state"
+    assert reported_temperature["state_topic"] == "hotel/v1/rooms/214/adapters/g301/reported/state"
     reported_online = configs["homeassistant/binary_sensor/room_214_reported_online/config"]
-    assert reported_online["state_topic"] == "hotel/v1/rooms/214/reported/state"
+    assert reported_online["state_topic"] == "hotel/v1/rooms/214/adapters/g301/reported/state"
     assert "homeassistant/button/room_214_return_to_automatic/config" in configs
 
 

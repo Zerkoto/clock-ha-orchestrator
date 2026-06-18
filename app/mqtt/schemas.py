@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.enums import ManualHvacMode
 
@@ -17,15 +17,25 @@ class ReportedHvacState(BaseModel):
     target_temperature_c: float | None = None
 
 
+class ReportedBinaryState(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool
+
+
 class ReportedRoomState(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    schema_version: int = 1
-    room_key: str
-    intent_version: int | None = None
+    schema_version: Literal[1] = 1
+    room_key: str = Field(min_length=1)
+    adapter_key: str = Field(min_length=1)
+    handled_components: list[Literal["hvac", "water_heater", "convectors"]] = Field(min_length=1)
+    intent_version: int | None = Field(default=None, ge=1)
     online: bool
     reported_at: datetime
-    hvac: ReportedHvacState
+    hvac: ReportedHvacState | None = None
+    water_heater: ReportedBinaryState | None = None
+    convectors: ReportedBinaryState | None = None
     ambient_temperature_c: float | None = None
     faults: list[str] = Field(default_factory=list)
     device_model: str | None = None
@@ -35,6 +45,24 @@ class ReportedRoomState(BaseModel):
     local_change_detected: bool = False
     raw_registers: dict[str, int] | None = None
     correlation_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_component_ownership(self) -> ReportedRoomState:
+        handled = set(self.handled_components)
+        if len(handled) != len(self.handled_components):
+            raise ValueError("handled_components cannot contain duplicates")
+        reported = {
+            component
+            for component in ("hvac", "water_heater", "convectors")
+            if getattr(self, component) is not None
+        }
+        if not reported.issubset(handled):
+            raise ValueError("component payloads must be owned by handled_components")
+        if self.online and handled != reported:
+            raise ValueError("online reports must include every handled component payload")
+        if self.reported_at.utcoffset() is None:
+            raise ValueError("reported_at must be timezone-aware")
+        return self
 
 
 class RegisterWriteResult(BaseModel):

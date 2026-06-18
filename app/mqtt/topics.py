@@ -51,8 +51,8 @@ class MqttTopics:
     def room_control_return_to_automatic_set(self, room_key: str) -> str:
         return f"{self.prefix}/rooms/{room_key}/control/return-to-automatic/set"
 
-    def room_reported_state(self, room_key: str) -> str:
-        return f"{self.prefix}/rooms/{room_key}/reported/state"
+    def room_reported_state(self, room_key: str, adapter_key: str) -> str:
+        return f"{self.prefix}/rooms/{room_key}/adapters/{adapter_key}/reported/state"
 
     def entrance_adapter_availability(self, entrance_key: str) -> str:
         return f"{self.prefix}/entrances/{entrance_key}/adapter/availability"

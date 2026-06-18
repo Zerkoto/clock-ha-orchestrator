@@ -8,7 +8,7 @@ topic readwrite homeassistant/#
 
 user future_adapter
 topic read hotel/v1/rooms/+/intent/state
-topic write hotel/v1/rooms/+/reported/state
+topic write hotel/v1/rooms/+/adapters/+/reported/state
 topic write hotel/v1/rooms/+/adapters/+/intent/result
 topic write hotel/v1/entrances/+/adapter/state
 topic write hotel/v1/entrances/+/adapter/availability

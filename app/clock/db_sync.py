@@ -584,6 +584,10 @@ class ClockDbSyncService:
             room_row = self._session.get(db.Room, room_id)
             if room is None or room_row is None:
                 continue
+            # Serialize the entire read-derive-write sequence with manual commands
+            # and other policy evaluations for this room. Acquiring this after
+            # reading the override can derive a newer version from stale inputs.
+            self._lock_room(room_id)
             latest_override = latest_override_row(self._session, room_id)
             override = self._active_override_from_row(latest_override, hotel_now)
             state = evaluate_room(
@@ -602,7 +606,6 @@ class ClockDbSyncService:
             )
             pms_payload = _pms_state_payload(state, correlation_id=correlation_id)
             semantic_hash = _room_state_hash(state, intent)
-            self._lock_room(room_id)
             latest_state = self._latest_room_state(room_id)
             control_payload, override_audit_events = self._end_inactive_override_if_needed(
                 registry,

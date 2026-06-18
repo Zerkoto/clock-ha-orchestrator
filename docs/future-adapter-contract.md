@@ -21,13 +21,16 @@ hotel/v1/rooms/{room_key}/intent/state
 Each adapter publishes actual state and execution results separately to:
 
 ```text
-hotel/v1/rooms/{room_key}/reported/state
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/reported/state
 hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
 ```
 
-Execution results identify `adapter_key` and `handled_components`. Retaining
-results per adapter prevents independent HVAC, water-heater and convector
-workers from overwriting one another's latest result.
+Reported state and execution results identify `adapter_key` and
+`handled_components`. Each adapter is the sole writer of its scoped topics.
+Retaining state per adapter prevents independent HVAC, water-heater and
+convector workers from overwriting one another. Home Assistant entities read
+the adapter that owns their component; there is no implicit room-level state
+aggregator in this foundation.
 
 Adapters must preserve:
 

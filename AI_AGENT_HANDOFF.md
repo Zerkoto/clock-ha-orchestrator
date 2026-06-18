@@ -229,7 +229,7 @@ Result after the entrance/G301 foundation on
 `codex/entrance-g301-foundation`:
 
 ```text
-pytest: 69 passed
+pytest: 71 passed
 ruff: All checks passed
 ruff format --check: all files already formatted
 mypy: Success, no issues found in 43 source files
@@ -342,7 +342,7 @@ hotel/v1/rooms/{room_key}/control/temperature/set
 hotel/v1/rooms/{room_key}/control/duration/set
 hotel/v1/rooms/{room_key}/control/water-heater/set
 hotel/v1/rooms/{room_key}/control/return-to-automatic/set
-hotel/v1/rooms/{room_key}/reported/state
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/reported/state
 hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
 hotel/v1/entrances/{entrance_key}/adapter/availability
 hotel/v1/entrances/{entrance_key}/adapter/state
@@ -360,8 +360,9 @@ Rules:
 8. Add correlation IDs.
 9. Subscribe to Home Assistant birth/status and republish discovery after Home
    Assistant starts.
-10. `reported/state`, `intent/result` and entrance adapter health are published
-    by adapters, not fabricated by the orchestrator.
+10. Adapter-scoped `reported/state`, `intent/result` and entrance adapter health
+    are published by adapters, not fabricated by the orchestrator. Each adapter
+    is the sole writer of its scope; there is no room-level state aggregator yet.
 
 ## Database Model
 

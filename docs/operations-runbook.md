@@ -50,11 +50,16 @@ retained `control/state`. Use the dashboard controls; do not publish directly
 to future hardware adapter topics.
 
 Adapter-reported room state appears under
-`hotel/v1/rooms/{room_key}/reported/state`, execution results under
+`hotel/v1/rooms/{room_key}/adapters/{adapter_key}/reported/state`, execution results under
 `hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result`, and entrance adapter health under
 `hotel/v1/entrances/{entrance_key}/adapter/state`. The orchestrator publishes
 Discovery metadata for these entities, but the adapter is responsible for the
 actual state payloads.
+
+Each adapter is the only writer of its adapter-scoped retained state and result
+topics. The current Home Assistant HVAC entities read the `g301` scope. Add
+future component entities against their owning adapter scope; do not let
+multiple adapters publish a shared room-level retained document.
 
 Keep the policy scheduler enabled in production. It is responsible for natural
 time transitions, including manual override expiry and until-checkout return to

@@ -18,14 +18,16 @@ hotel/v1/rooms/{room_key}/control/temperature/set
 hotel/v1/rooms/{room_key}/control/duration/set
 hotel/v1/rooms/{room_key}/control/water-heater/set
 hotel/v1/rooms/{room_key}/control/return-to-automatic/set
-hotel/v1/rooms/{room_key}/reported/state
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/reported/state
 hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
 hotel/v1/entrances/{entrance_key}/adapter/availability
 hotel/v1/entrances/{entrance_key}/adapter/state
 ```
 
-The orchestrator publishes desired intent and Home Assistant Discovery metadata. Hardware adapters
-publish `reported/state`, `intent/result` and entrance adapter health.
+The orchestrator publishes desired intent and Home Assistant Discovery metadata.
+Hardware adapters publish adapter-scoped `reported/state`, `intent/result` and
+entrance adapter health. An adapter is the sole writer of its scoped retained
+topics; no canonical room-level reported-state aggregator exists yet.
 
 ## Desired Intent
 
@@ -128,6 +130,8 @@ Adapters publish retained actual room state without guest PII:
 {
   "schema_version": 1,
   "room_key": "214",
+  "adapter_key": "g301",
+  "handled_components": ["hvac"],
   "intent_version": 17,
   "online": true,
   "reported_at": "2026-12-20T10:05:00+00:00",
