@@ -1,6 +1,6 @@
 # AI Agent Handoff For Clock HA Orchestrator
 
-Updated: 2026-06-18
+Updated: 2026-06-19
 
 Give this file to future AI agents before asking them to work on Clock PMS+,
 Home Assistant, MQTT, hotel automation, database persistence, Docker, or
@@ -57,8 +57,8 @@ Booking.com
 -> Clock PMS+
 -> Custom Clock-HA Orchestrator
 -> MQTT broker
--> Home Assistant
--> G301 / future hardware adapters
+   -> Home Assistant
+   -> G301 / future hardware adapters
 ```
 
 Booking.com already communicates with Clock PMS+ through Clock's native
@@ -115,7 +115,7 @@ slice:
 1. Python 3.12 project with FastAPI.
 2. Pydantic v2 settings and validation.
 3. SQLAlchemy 2 persistence models.
-4. Alembic initial migration.
+4. Alembic migration chain through `20260618_0005_entrance_registry`.
 5. Deterministic domain model for rooms, bookings, policy, overrides and desired
    intent.
 6. Deterministic room-state machine.
@@ -127,8 +127,8 @@ slice:
 12. Home Assistant MQTT Discovery config generation.
 13. Home Assistant dashboard generator from room inventory YAML.
 14. DB-backed Clock sync application service for normalized booking upsert,
-    physical-room assignment history, affected-room state recalculation and
-    transactional MQTT outbox event creation.
+    physical-room assignment history, room-locked read/derive/write state
+    recalculation and transactional MQTT outbox event creation.
 15. FastAPI lifespan runtime shell with DB/migration readiness checks, fixture
     Clock sync entrypoint, policy tick entrypoint, optional MQTT lifecycle,
     Discovery publishing, system-state publishing and outbox worker loop.
@@ -144,8 +144,9 @@ slice:
     validated per entrance.
 20. Entrance-grouped generated Reception dashboard with adapter/gateway health
     and desired-versus-reported room state entities.
-21. Adapter-facing MQTT schemas and topics for reported room state, intent
-    execution results and entrance adapter health.
+21. Adapter-facing MQTT schemas and sole-writer, adapter-scoped topics for
+    reported room state and intent execution results, plus entrance adapter
+    health.
 22. Offline G301 Version G register codecs, typed slave-aware async transport
     boundary, capability and limit validation, actual-status readback, delayed
     verification, bounded retry, separate seen/terminal/applied intent version
@@ -209,7 +210,7 @@ tests/
 
 ## Current Validation State
 
-Validation last run successfully on 2026-06-18 from:
+Validation last run successfully on 2026-06-19 from:
 
 ```text
 C:\Users\zerko\Documents\GIT\clock-ha-orchestrator
@@ -262,6 +263,11 @@ https://github.com/Zerkoto/clock-ha-orchestrator
 ```
 
 The local `main` branch tracks `origin/main`.
+
+The entrance/G301 foundation is on `codex/entrance-g301-foundation` in
+[PR #3](https://github.com/Zerkoto/clock-ha-orchestrator/pull/3). The PR is
+ready for review/merge after its required checks pass; merge it into `main`
+before starting the next production slice from a fresh branch.
 
 Useful checks:
 
@@ -396,6 +402,9 @@ Important invariants:
    over to the next occupant of the same room.
 9. Rooms require `entrance_key`; `floor` is optional display metadata only.
 10. Optional G301 slave addresses are unique within each entrance.
+11. A room row lock is acquired before override/state reads and held across the
+    complete read/derive/write sequence so intent versions cannot be allocated
+    from stale room inputs.
 
 ## Current Gaps And Next Useful Slice
 
@@ -425,6 +434,12 @@ Other important next work:
    mode rather than baking those assumptions into the offline contract.
 6. Expand end-to-end tests for unassigned booking -> assigned room ->
    pre-arrival -> check-in -> manual override -> room move -> checkout.
+7. Build the separate adapter service with durable intent watermarks and slave
+   cooldown state, per-entrance queue scheduling that releases the bus during
+   delays, capability-profile caching/invalidation, explicit staleness policy
+   and live transport only after commissioning.
+8. Finalize partial-write verification and mismatch grace timing from real G301
+   bench observations rather than assumptions in the offline foundation.
 
 ## Commands For Future Agents
 
@@ -486,8 +501,8 @@ system in Razlog, Bulgaria. It integrates Clock PMS+ with Home Assistant
 through MQTT for approximately 275 apartments.
 
 Confirmed architecture:
-Booking.com -> Clock PMS+ -> Custom Clock-HA Orchestrator -> MQTT broker ->
-Home Assistant -> G301 / future hardware adapters.
+Booking.com -> Clock PMS+ -> Custom Clock-HA Orchestrator -> MQTT broker, with
+Home Assistant and G301 / future hardware adapters as parallel MQTT consumers.
 
 Critical constraints:
 - Do not create a Booking.com API client.

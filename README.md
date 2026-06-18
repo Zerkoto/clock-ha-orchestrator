@@ -79,8 +79,14 @@ room state.
 Adapter intent handling validates schema and validity windows, keeps separate
 seen/terminal/applied version watermarks for safe MQTT redelivery, routes by
 registry entrance rather than floor, publishes component-scoped reported state
-and execution results, and applies per-slave cooldown so a failed indoor unit does
-not keep blocking healthy units on the same entrance.
+and execution results, and applies per-slave cooldown so a failed indoor unit
+does not keep blocking healthy units on the same entrance.
+
+The future adapter service still needs durable watermark/cooldown persistence,
+per-entrance queue scheduling that releases the bus during delayed work,
+capability-profile caching and invalidation, a commissioned staleness policy,
+and live gateway transport. Partial-write verification and mismatch grace
+timing must be finalized from bench observations rather than guessed here.
 
 Generate the Home Assistant dashboard with:
 

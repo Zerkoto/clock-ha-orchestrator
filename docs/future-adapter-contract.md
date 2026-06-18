@@ -82,7 +82,8 @@ persist it so restart and reconnect behavior retains the same idempotency rules.
 
 Adapters reject unsupported schemas and malformed HVAC states. An expired
 intent is terminal without hardware access; an intent whose `effective_from`
-is still in the future is retryable and must not consume the version. Small
+is still in the future advances only `last_seen_version`: it must not become
+terminal or applied, and equal-version redelivery remains eligible. Small
 clock-skew tolerance may be configured, but timestamps must be timezone-aware.
 
 A failed slave must enter an independent bounded exponential cooldown. Commands
