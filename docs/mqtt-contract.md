@@ -18,10 +18,16 @@ hotel/v1/rooms/{room_key}/control/temperature/set
 hotel/v1/rooms/{room_key}/control/duration/set
 hotel/v1/rooms/{room_key}/control/water-heater/set
 hotel/v1/rooms/{room_key}/control/return-to-automatic/set
-hotel/v1/rooms/{room_key}/reported/state
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/reported/state
+hotel/v1/rooms/{room_key}/adapters/{adapter_key}/intent/result
+hotel/v1/entrances/{entrance_key}/adapter/availability
+hotel/v1/entrances/{entrance_key}/adapter/state
 ```
 
-`reported/state` is reserved for future adapters and is not published by this service in Version 1.
+The orchestrator publishes desired intent and Home Assistant Discovery metadata.
+Hardware adapters publish adapter-scoped `reported/state`, `intent/result` and
+entrance adapter health. An adapter is the sole writer of its scoped retained
+topics; no canonical room-level reported-state aggregator exists yet.
 
 ## Desired Intent
 
@@ -115,3 +121,94 @@ system-generated automatic override row and publishes default retained
 ```
 
 Home Assistant must never publish directly to future hardware topics.
+
+## Adapter Reported State
+
+Adapters publish retained actual room state without guest PII:
+
+```json
+{
+  "schema_version": 1,
+  "room_key": "214",
+  "adapter_key": "g301",
+  "handled_components": ["hvac"],
+  "intent_version": 17,
+  "online": true,
+  "reported_at": "2026-12-20T10:05:00+00:00",
+  "hvac": {
+    "enabled": true,
+    "mode": "heat",
+    "target_temperature_c": 22.0
+  },
+  "ambient_temperature_c": 21.4,
+  "faults": [],
+  "device_model": "confirmed-model-id",
+  "firmware_version": "confirmed-firmware-id",
+  "capability_profile": {"access_control": true},
+  "last_successful_command_version": 17,
+  "local_change_detected": false,
+  "correlation_id": "00000000-0000-0000-0000-000000000000"
+}
+```
+
+Final execution statuses are `applied`, `applied_unconfirmed`, `rejected`,
+`expired`, `timeout`, `modbus_exception`, `readback_mismatch`, `device_offline`,
+`stale`, `failed` or `skipped`. `not_yet_effective` is retryable. `accepted`,
+`queued` and `writing` are available for intermediate event streams.
+`applied_unconfirmed` means writes completed but actual-state verification
+could not complete; it must not be presented as confirmed success.
+
+`stale` means the received version is lower than the adapter's highest seen
+version. Equal-version MQTT redelivery is not stale: retryable work resumes,
+uncertain writes are verified before rewriting, and terminal results are
+replayed. The same version with a different semantic payload is rejected.
+
+Adapters publish execution results for each consumed intent:
+
+```json
+{
+  "schema_version": 1,
+  "room_key": "214",
+  "intent_version": 17,
+  "adapter_key": "g301",
+  "handled_components": ["hvac"],
+  "status": "applied",
+  "message": null,
+  "applied_at": "2026-12-20T10:05:01+00:00",
+  "register_writes": [
+    {"address": "0x0202", "value": 4},
+    {"address": "0x0203", "value": 220},
+    {"address": "0x0201", "value": 1}
+  ],
+  "mismatches": {},
+  "correlation_id": "00000000-0000-0000-0000-000000000000"
+}
+```
+
+Results are retained on the adapter-scoped result topic. Consumers must use
+`handled_components` to interpret the result and must not infer that unrelated
+components were applied.
+
+Entrance adapter health is published under:
+
+```json
+{
+  "schema_version": 1,
+  "entrance_key": "entrance_a",
+  "status": "idle",
+  "adapter_online": true,
+  "gateway_online": true,
+  "room_mismatches": 0,
+  "last_poll_at": "2026-12-20T10:05:01+00:00",
+  "last_successful_poll_at": "2026-12-20T10:05:01+00:00",
+  "gateway_latency_ms": 42.3,
+  "consecutive_failures": 0,
+  "last_modbus_exception": null,
+  "configured_slaves": 55,
+  "online_slaves": 54,
+  "offline_slaves": 1,
+  "scan_duration_ms": 18350.0,
+  "command_queue_depth": 0,
+  "updated_at": "2026-12-20T10:05:01+00:00"
+}
+```

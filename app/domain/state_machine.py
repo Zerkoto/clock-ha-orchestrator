@@ -164,7 +164,6 @@ def evaluate_room(
                 booking=selected,
                 reason="departure_time_passed_without_clock_checkout",
                 effective_from=now,
-                expires_at=checkout_at(selected, policy),
             )
         return RoomStateEvaluation(
             room_key=room.key,

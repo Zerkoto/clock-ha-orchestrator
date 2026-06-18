@@ -3,20 +3,32 @@ property:
   name: Local Stay Hotel & Suites
   timezone: Europe/Sofia
 
+entrances:
+  - key: entrance_a
+    name: Entrance A
+    gateway_host: null
+    gateway_port: null
+    enabled: true
+
 rooms:
   - key: "101"
     name: "Apartment 101"
+    entrance_key: entrance_a
     floor: "1"
     clock_room_id: null
+    g301: null
     enabled: true
   - key: "102"
     name: "Apartment 102"
+    entrance_key: entrance_a
     floor: "1"
     clock_room_id: null
+    g301: null
     enabled: true
   - key: "214"
     name: "Apartment 214"
+    entrance_key: entrance_a
     floor: "2"
     clock_room_id: null
+    g301: null
     enabled: true
-

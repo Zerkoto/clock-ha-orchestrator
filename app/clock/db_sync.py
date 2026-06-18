@@ -293,6 +293,7 @@ class ClockDbSyncService:
                     property_id=property_row.id,
                     key=room.key,
                     name=room.name,
+                    entrance_key=room.entrance_key,
                     floor=room.floor,
                     clock_room_id=room.clock_room_id,
                     enabled=room.enabled,
@@ -301,6 +302,7 @@ class ClockDbSyncService:
                 self._session.flush()
             else:
                 room_row.name = room.name
+                room_row.entrance_key = room.entrance_key
                 room_row.floor = room.floor
                 room_row.clock_room_id = room.clock_room_id
                 room_row.enabled = room.enabled
@@ -582,6 +584,10 @@ class ClockDbSyncService:
             room_row = self._session.get(db.Room, room_id)
             if room is None or room_row is None:
                 continue
+            # Serialize the entire read-derive-write sequence with manual commands
+            # and other policy evaluations for this room. Acquiring this after
+            # reading the override can derive a newer version from stale inputs.
+            self._lock_room(room_id)
             latest_override = latest_override_row(self._session, room_id)
             override = self._active_override_from_row(latest_override, hotel_now)
             state = evaluate_room(
@@ -629,6 +635,13 @@ class ClockDbSyncService:
                 intent = intent.model_copy(
                     update={"intent_version": _next_intent_version(latest_state)}
                 )
+            persisted_intent_version = (
+                intent.intent_version
+                if intent is not None
+                else latest_state.intent_version
+                if latest_state is not None
+                else 0
+            )
 
             booking_id = (
                 loaded.ids_by_clock_booking_id.get(state.booking.clock_booking_id)
@@ -644,7 +657,7 @@ class ClockDbSyncService:
                     attention_reason=state.attention_reason.value,
                     effective_from=_to_utc(state.effective_from),
                     expires_at=_optional_to_utc(state.expires_at),
-                    intent_version=intent.intent_version if intent is not None else 0,
+                    intent_version=persisted_intent_version,
                     payload_hash=semantic_hash,
                     created_at=observed_at,
                 )
@@ -783,6 +796,11 @@ class ClockDbSyncService:
             .order_by(db.RoomState.created_at.desc(), db.RoomState.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+
+    def _lock_room(self, room_id: UUID) -> None:
+        self._session.execute(
+            select(db.Room.id).where(db.Room.id == room_id).with_for_update()
+        ).scalar_one()
 
     def _active_override_from_row(
         self,

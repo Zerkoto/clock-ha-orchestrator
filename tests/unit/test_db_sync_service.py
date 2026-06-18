@@ -10,10 +10,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.clock import db_sync as db_sync_module
 from app.clock.db_sync import ClockDbSyncService
 from app.clock.sync import SyncCursorState, SyncRunResult
 from app.domain.enums import AutomationPhase, BookingStatus, ControlMode, ManualHvacMode
-from app.domain.models import PropertyRegistry, Room, RoomRegistry
+from app.domain.models import Entrance, PropertyRegistry, Room, RoomRegistry
 from app.persistence import models as db
 from app.policy.control import RoomControlCommandService
 from tests.conftest import booking
@@ -38,9 +39,22 @@ def engine() -> Engine:
 def registry() -> RoomRegistry:
     return RoomRegistry(
         property=PropertyRegistry(key="local_stay_razlog", name="Local Stay Hotel & Suites"),
+        entrances=[Entrance(key="entrance_a", name="Entrance A")],
         rooms=[
-            Room(key="214", name="Apartment 214", floor="2", clock_room_id="clock-room-214"),
-            Room(key="215", name="Apartment 215", floor="2", clock_room_id="clock-room-215"),
+            Room(
+                key="214",
+                name="Apartment 214",
+                entrance_key="entrance_a",
+                floor="2",
+                clock_room_id="clock-room-214",
+            ),
+            Room(
+                key="215",
+                name="Apartment 215",
+                entrance_key="entrance_a",
+                floor="2",
+                clock_room_id="clock-room-215",
+            ),
         ],
     )
 
@@ -161,6 +175,44 @@ def test_policy_tick_moves_reserved_room_to_pre_arrival_without_clock_delta(
             AutomationPhase.PRE_ARRIVAL.value,
         ]
         assert [state.intent_version for state in states] == [1, 2]
+
+
+def test_room_lock_precedes_override_and_state_reads(
+    engine: Engine,
+    registry: RoomRegistry,
+    policy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    apply_sync(engine, registry, policy, [booking()], NOW)
+    locked_room_ids: set[UUID] = set()
+    original_lock = ClockDbSyncService._lock_room
+    original_latest_state = ClockDbSyncService._latest_room_state
+    original_latest_override = db_sync_module.latest_override_row
+
+    def recording_lock(service: ClockDbSyncService, room_id: UUID) -> None:
+        original_lock(service, room_id)
+        locked_room_ids.add(room_id)
+
+    def checked_latest_override(session: Session, room_id: UUID):
+        assert room_id in locked_room_ids
+        return original_latest_override(session, room_id)
+
+    def checked_latest_state(service: ClockDbSyncService, room_id: UUID):
+        assert room_id in locked_room_ids
+        return original_latest_state(service, room_id)
+
+    monkeypatch.setattr(ClockDbSyncService, "_lock_room", recording_lock)
+    monkeypatch.setattr(ClockDbSyncService, "_latest_room_state", checked_latest_state)
+    monkeypatch.setattr(db_sync_module, "latest_override_row", checked_latest_override)
+
+    with Session(engine) as session:
+        ClockDbSyncService(
+            session=session,
+            room_registry=registry,
+            policy=policy,
+        ).evaluate_all_rooms(now=LATER, correlation_id=CORRELATION_ID)
+
+    assert len(locked_room_ids) == len(registry.rooms)
 
 
 def test_assignment_removal_recalculates_old_room_without_unassigned_intent(
